@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vulngym-enrich"
+version = "0.1.0"
+description = "Reproducible VulnGym enrichment and finding-verification benchmark"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10"]
+
+[project.scripts]
+vulngym-audit = "vulngym_enrich.audit:main"
+vulngym-checkout = "vulngym_enrich.checkout:main"
+vulngym-evaluate = "vulngym_enrich.evaluator:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vulngym_enrich"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

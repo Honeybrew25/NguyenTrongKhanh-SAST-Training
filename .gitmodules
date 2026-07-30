@@ -1,0 +1,6 @@
+[submodule "benchmark/VulnGym"]
+	path = benchmark/VulnGym
+	url = https://github.com/Tencent/VulnGym.git
+[submodule "rules/semgrep-rules"]
+	path = rules/semgrep-rules
+	url = https://github.com/semgrep/semgrep-rules.git

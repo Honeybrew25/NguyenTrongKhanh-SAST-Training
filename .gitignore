@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Generated data and caches
+artifacts/
+cache/
+worktrees/
+reports/generated/
+
+# Scanner output
+*.sarif
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

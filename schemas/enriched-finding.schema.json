@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/enriched-finding.schema.json",
+  "title": "VulnGym normalized and adjudicated scanner finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "repo_url",
+    "commit",
+    "scanner",
+    "rule",
+    "message",
+    "location",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "finding_id": {"type": "string", "minLength": 1},
+    "canonical_finding_id": {"type": ["string", "null"]},
+    "repo_url": {"type": "string", "pattern": "^https://github\\.com/"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "scanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"enum": ["semgrep", "opengrep", "codeql", "other"]},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "ruleset_commit"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "ruleset_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "cwe": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "category": {"type": ["string", "null"]},
+        "severity": {"type": ["string", "null"]}
+      }
+    },
+    "message": {"type": "string"},
+    "location": {"$ref": "#/$defs/location"},
+    "dataflow_trace": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/traceNode"},
+      "default": []
+    },
+    "snippet": {"type": ["string", "null"]},
+    "fingerprint": {"type": ["string", "null"]},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_result_ref", "scan_id"],
+      "properties": {
+        "raw_result_ref": {"type": "string", "minLength": 1},
+        "scan_id": {"type": "string", "minLength": 1},
+        "observed_by": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["scanner", "rule_id"],
+            "properties": {
+              "scanner": {"type": "string"},
+              "rule_id": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "adjudication": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["label", "rationale", "evidence", "annotator", "annotated_at"],
+      "properties": {
+        "label": {
+          "enum": ["TP_KNOWN", "TP_NOVEL", "FP_CONFIRMED", "UNCERTAIN", "DUPLICATE", "OUT_OF_SCOPE"]
+        },
+        "reason_codes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "rationale": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/traceNode"}},
+        "annotator": {"type": "string", "minLength": 1},
+        "annotated_at": {"type": "string", "format": "date-time"},
+        "linked_entry_ids": {"type": "array", "items": {"pattern": "^entry-[0-9]{5}$"}, "uniqueItems": true},
+        "linked_report_ids": {"type": "array", "items": {"pattern": "^GHSA-[A-Z0-9-]+$"}, "uniqueItems": true}
+      }
+    }
+  },
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "start_line", "end_line"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "start_col": {"type": ["integer", "null"], "minimum": 1},
+        "end_col": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "traceNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "description"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "line": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*$"}]},
+        "description": {"type": "string"},
+        "code": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

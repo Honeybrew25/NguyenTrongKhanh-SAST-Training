@@ -1,0 +1,6 @@
+rules:
+  - id: day1-smoke-python-eval
+    languages: [python]
+    message: Dynamic eval is unsafe
+    severity: ERROR
+    pattern: eval(...)

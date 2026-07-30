@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "generated_on": "2026-07-30",
+  "benchmark": {
+    "name": "Tencent/VulnGym",
+    "tag": "v0.1.4",
+    "commit": "cd69f7e163e08485ab5496115ae03439cda6e27e"
+  },
+  "ruleset": {
+    "name": "semgrep/semgrep-rules",
+    "commit": "40b8c63f75dc7c22c8a77482d73bfb864b146f7e",
+    "path": "rules/semgrep-rules",
+    "policy": "The same vendored Semgrep-compatible rules are used by both engines so engine effects can be separated from rule effects."
+  },
+  "scanners": {
+    "semgrep": {
+      "version": "1.171.0",
+      "local_verified": true,
+      "docker_image": "semgrep/semgrep:1.171.0"
+    },
+    "opengrep": {
+      "version": "1.26.0",
+      "local_verified": true,
+      "windows_asset": "https://github.com/opengrep/opengrep/releases/download/v1.26.0/opengrep_windows_x86.exe",
+      "windows_asset_sha256": "4e6c0e201982cd72ca4aff5798a2ff133e17de8af3b00b460238fdda4dd266e3",
+      "local_path": "cache/tools/opengrep/1.26.0/opengrep.exe"
+    }
+  }
+}
