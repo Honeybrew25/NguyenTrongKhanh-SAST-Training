@@ -1,21 +1,21 @@
-# VulnGym enrichment and finding verifier
+# Làm giàu dữ liệu VulnGym và xác minh phát hiện
 
-This repository extends Tencent VulnGym with adjudicated scanner findings, especially confirmed false positives, and provides a reproducible benchmark for finding-verification agents.
+Kho lưu trữ này mở rộng Tencent VulnGym bằng các phát hiện của trình quét đã được thẩm định, đặc biệt là các kết quả dương tính giả đã được xác nhận, đồng thời cung cấp một bộ benchmark có thể tái lập dành cho các tác nhân xác minh phát hiện.
 
-## Frozen inputs
+## Các đầu vào được cố định
 
 - VulnGym: `v0.1.4` at `cd69f7e163e08485ab5496115ae03439cda6e27e`
 - Semgrep: `1.171.0`
 - OpenGrep: `1.26.0`
 - Rules: `semgrep/semgrep-rules` at `40b8c63f75dc7c22c8a77482d73bfb864b146f7e`
 
-The benchmark and rules are Git submodules. Initialize them with:
+Bộ benchmark và các quy tắc là những Git submodule. Khởi tạo chúng bằng lệnh:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## Development setup
+## Thiết lập môi trường phát triển
 
 ```bash
 uv sync --extra dev
@@ -23,21 +23,21 @@ uv run vulngym-audit --benchmark benchmark/VulnGym --output artifacts/manifests/
 uv run pytest
 ```
 
-## Repository layout
+## Cấu trúc kho lưu trữ
 
-- `benchmark/VulnGym/`: pinned upstream benchmark.
-- `rules/semgrep-rules/`: pinned scanner ruleset.
-- `config/scanners.lock.json`: reproducibility lock.
-- `schemas/`: normalized and adjudicated finding schemas.
-- `src/vulngym_enrich/`: audit, checkout, matching, and evaluation tools.
-- `tests/`: regression tests.
-- `docs/`: annotation and methodology documents.
-- `artifacts/`: generated manifests and scan outputs; ignored by Git.
+- `benchmark/VulnGym/`: bộ benchmark thượng nguồn đã được ghim phiên bản.
+- `rules/semgrep-rules/`: bộ quy tắc của trình quét đã được ghim phiên bản.
+- `config/scanners.lock.json`: tệp khóa phục vụ khả năng tái lập.
+- `schemas/`: các schema dành cho phát hiện đã chuẩn hóa và thẩm định.
+- `src/vulngym_enrich/`: các công cụ kiểm tra, checkout, đối sánh và đánh giá.
+- `tests/`: các kiểm thử hồi quy.
+- `docs/`: tài liệu về chú thích và phương pháp luận.
+- `artifacts/`: các manifest và kết quả quét được tạo ra; bị Git bỏ qua.
 
-## Label policy
+## Chính sách gán nhãn
 
-An unmatched Semgrep/OpenGrep finding is not automatically a false positive. Unmatched findings can be novel vulnerabilities or alternate manifestations of known vulnerabilities. See `docs/annotation-guideline.md`.
+Một phát hiện của Semgrep/OpenGrep không khớp với dữ liệu VulnGym không mặc nhiên là kết quả dương tính giả. Các phát hiện không khớp có thể là lỗ hổng mới hoặc biểu hiện khác của những lỗ hổng đã biết. Xem `docs/annotation-guideline.md`.
 
-## Safety and scope
+## An toàn và phạm vi
 
-Run scanners only against repositories and commits in the public VulnGym benchmark or other code you are authorized to analyze. Agent verification is read-only by default and must not receive advisory labels or fixed patches during evaluation.
+Chỉ chạy trình quét trên các kho lưu trữ và commit thuộc bộ benchmark VulnGym công khai hoặc trên mã nguồn mà bạn được phép phân tích. Theo mặc định, quá trình xác minh của tác nhân chỉ được phép đọc và không được nhận nhãn cảnh báo bảo mật hoặc bản vá đã sửa lỗi trong quá trình đánh giá.

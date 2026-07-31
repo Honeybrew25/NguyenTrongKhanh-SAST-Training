@@ -1,37 +1,37 @@
-# Finding annotation guideline
+# Hướng dẫn chú thích phát hiện
 
-## Unit of annotation
+## Đơn vị chú thích
 
-One normalized scanner finding at one exact `(repo_url, commit)` snapshot. Duplicate scanner emissions are clustered but retain all source-tool provenance.
+Một phát hiện đã chuẩn hóa của trình quét tại đúng một ảnh chụp `(repo_url, commit)`. Các kết quả trùng lặp do trình quét tạo ra được gom nhóm nhưng vẫn giữ lại đầy đủ thông tin nguồn gốc từ mọi công cụ.
 
-## Labels
+## Các nhãn
 
-- `TP_KNOWN`: exploitable vulnerability linked to a VulnGym advisory.
-- `TP_NOVEL`: exploitable vulnerability not represented in VulnGym.
-- `FP_CONFIRMED`: the claimed vulnerability is not exploitable under the declared threat model.
-- `UNCERTAIN`: evidence is insufficient or reviewers disagree.
-- `DUPLICATE`: duplicate of another canonical candidate.
-- `OUT_OF_SCOPE`: generated/vendor/test-only code or a non-security finding excluded by policy.
+- `TP_KNOWN`: lỗ hổng có thể bị khai thác và được liên kết với một cảnh báo bảo mật trong VulnGym.
+- `TP_NOVEL`: lỗ hổng có thể bị khai thác nhưng chưa có trong VulnGym.
+- `FP_CONFIRMED`: lỗ hổng được nêu không thể bị khai thác theo mô hình đe dọa đã công bố.
+- `UNCERTAIN`: bằng chứng chưa đầy đủ hoặc những người đánh giá không đồng thuận.
+- `DUPLICATE`: trùng lặp với một ứng viên chuẩn khác.
+- `OUT_OF_SCOPE`: mã được sinh tự động, mã của nhà cung cấp, mã chỉ dùng cho kiểm thử hoặc một phát hiện không liên quan đến bảo mật bị loại theo chính sách.
 
-Only `TP_KNOWN`, `TP_NOVEL`, and `FP_CONFIRMED` enter the primary confusion matrix. The other statuses are reported separately.
+Chỉ `TP_KNOWN`, `TP_NOVEL` và `FP_CONFIRMED` được đưa vào ma trận nhầm lẫn chính. Các trạng thái còn lại được báo cáo riêng.
 
-## Prohibited shortcut
+## Lối tắt bị nghiêm cấm
 
-A scanner finding that does not match a VulnGym entry is **not automatically a false positive**. VulnGym does not claim exhaustive vulnerability coverage of each repository.
+Một phát hiện của trình quét không khớp với mục nào trong VulnGym **không mặc nhiên là kết quả dương tính giả**. VulnGym không tuyên bố bao phủ toàn bộ lỗ hổng của từng kho lưu trữ.
 
-## Required evidence
+## Bằng chứng bắt buộc
 
-Every adjudicated row must include:
+Mỗi bản ghi đã được thẩm định phải bao gồm:
 
-1. Exact repository and commit.
-2. Scanner, scanner version, ruleset commit, and rule ID.
-3. Finding location and relevant source/sink trace when available.
-4. A concise rationale with repository-relative file and line references.
-5. Annotator identity or stable pseudonym and timestamp.
-6. For `FP_CONFIRMED`, at least one reason code.
-7. For `TP_KNOWN`, the linked VulnGym entry/report ID in label-only metadata that is hidden from the verifier.
+1. Kho lưu trữ và commit chính xác.
+2. Trình quét, phiên bản trình quét, commit của bộ quy tắc và ID quy tắc.
+3. Vị trí phát hiện và dấu vết nguồn/đích liên quan nếu có.
+4. Lập luận ngắn gọn kèm tham chiếu đến tệp và dòng tương đối so với gốc kho lưu trữ.
+5. Danh tính hoặc bí danh ổn định của người chú thích, cùng dấu thời gian.
+6. Đối với `FP_CONFIRMED`, ít nhất một mã lý do.
+7. Đối với `TP_KNOWN`, ID mục/báo cáo VulnGym được liên kết trong phần siêu dữ liệu chỉ chứa nhãn và được ẩn khỏi bộ xác minh.
 
-## False-positive reason codes
+## Mã lý do cho kết quả dương tính giả
 
 - `UNREACHABLE_CODE`
 - `NO_ATTACKER_CONTROL`
@@ -46,19 +46,19 @@ Every adjudicated row must include:
 - `SCANNER_MODELING_ERROR`
 - `OTHER_EXPLAINED`
 
-## Review protocol
+## Quy trình đánh giá
 
-1. Normalize and deduplicate scanner output.
-2. Attempt strict/strong matching to known VulnGym entries.
-3. Run agent-assisted pre-triage without labels, advisory text, web access, or fixed patches.
-4. Human-review all possible novel vulnerabilities, uncertain cases, and the sealed test set.
-5. Resolve disagreement with an independent adjudicator.
-6. Keep `UNCERTAIN` out of headline precision/recall/F1.
+1. Chuẩn hóa và loại bỏ kết quả trùng lặp trong đầu ra của trình quét.
+2. Thử đối sánh nghiêm ngặt hoặc có độ tin cậy cao với các mục VulnGym đã biết.
+3. Thực hiện phân loại sơ bộ với sự hỗ trợ của tác nhân mà không cung cấp nhãn, nội dung cảnh báo bảo mật, quyền truy cập web hoặc bản vá đã sửa lỗi.
+4. Yêu cầu con người đánh giá mọi lỗ hổng mới có khả năng tồn tại, các trường hợp chưa chắc chắn và tập kiểm thử được niêm phong.
+5. Giải quyết bất đồng bằng một người thẩm định độc lập.
+6. Không đưa `UNCERTAIN` vào các chỉ số precision/recall/F1 chính.
 
-## Leakage controls
+## Kiểm soát rò rỉ
 
-The verifier receives the vulnerable repository snapshot and normalized scanner alert only. It must not receive CVE/GHSA IDs, VulnGym titles/traces, fixed commits, patches, labels, or web access.
+Bộ xác minh chỉ nhận ảnh chụp kho lưu trữ có lỗ hổng và cảnh báo đã chuẩn hóa của trình quét. Bộ xác minh không được nhận ID CVE/GHSA, tiêu đề/dấu vết VulnGym, commit đã sửa lỗi, bản vá, nhãn hoặc quyền truy cập web.
 
-## Threat model
+## Mô hình đe dọa
 
-A true positive requires a concrete attacker capability, a reachable entry, a security-impacting operation, and no effective blocking control. Merely containing a dangerous API or suspicious syntax is insufficient.
+Một kết quả dương tính thật đòi hỏi kẻ tấn công phải có năng lực cụ thể, có một điểm vào có thể tiếp cận, có thao tác gây ảnh hưởng đến bảo mật và không có biện pháp kiểm soát ngăn chặn hữu hiệu. Việc mã nguồn chỉ chứa một API nguy hiểm hoặc cú pháp đáng ngờ là chưa đủ.
