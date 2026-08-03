@@ -16,6 +16,7 @@
     "semgrep": {
       "version": "1.171.0",
       "local_verified": true,
+      "local_executable_sha256": "f2367cb9b0f9a83c76af15588c6a333014611c641821c257bf15305139ed8641",
       "docker_image": "semgrep/semgrep:1.171.0"
     },
     "opengrep": {
@@ -24,6 +25,11 @@
       "windows_asset": "https://github.com/opengrep/opengrep/releases/download/v1.26.0/opengrep_windows_x86.exe",
       "windows_asset_sha256": "4e6c0e201982cd72ca4aff5798a2ff133e17de8af3b00b460238fdda4dd266e3",
       "local_path": "cache/tools/opengrep/1.26.0/opengrep.exe"
+    },
+    "codeql": {
+      "enabled": false,
+      "status": "not_installed",
+      "policy": "Conditional escalation baseline only. Pin the CLI bundle and query pack before enabling; do not mix its metrics with the shared-rule Semgrep/OpenGrep comparison."
     }
   }
 }

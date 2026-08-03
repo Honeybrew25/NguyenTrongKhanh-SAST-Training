@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from .candidate_matcher import STRICT, STRONG, match_normalized_finding_entry
 from .matcher import finding_matches_entry
 
 TRUE_LABELS = {"TP_KNOWN", "TP_NOVEL"}
@@ -44,7 +45,14 @@ def coverage_metrics(entries: list[dict[str, Any]], findings: list[dict[str, Any
         key = (str(finding.get("repo_url", "")).removesuffix(".git").rstrip("/"), str(finding.get("commit", "")).lower())
         matches = []
         for entry in by_snapshot.get(key, []):
-            if finding_matches_entry(finding, entry, tolerance=tolerance):
+            if "location" in finding:
+                normalized_match = match_normalized_finding_entry(finding, entry, tolerance)
+                is_match = bool(
+                    normalized_match and normalized_match["tier"] in {STRICT, STRONG}
+                )
+            else:
+                is_match = finding_matches_entry(finding, entry, tolerance=tolerance)
+            if is_match:
                 matches.append(entry["entry_id"])
                 matched_entry_ids.add(entry["entry_id"])
                 matched_report_ids.add(entry["report_id"])
@@ -54,7 +62,12 @@ def coverage_metrics(entries: list[dict[str, Any]], findings: list[dict[str, Any
 
     all_reports = {entry["report_id"] for entry in entries}
     return {
-        "policy": {"path": "normalized_exact", "line_tolerance": tolerance, "line_ranges": "inclusive_interval"},
+        "policy": {
+            "path": "normalized_exact",
+            "line_tolerance": tolerance,
+            "line_ranges": "inclusive_interval",
+            "normalized_finding_contract": "source trace plus sink location",
+        },
         "totals": {"entries": len(entries), "advisories": len(all_reports), "findings": len(findings)},
         "recall": {
             "entry_level": {
@@ -75,12 +88,17 @@ def coverage_metrics(entries: list[dict[str, Any]], findings: list[dict[str, Any
 
 def classification_metrics(labels: list[dict[str, Any]], predictions: list[dict[str, Any]]) -> dict[str, Any]:
     label_by_id: dict[str, str] = {}
+    seen_label_ids: set[str] = set()
     excluded_label_counts: dict[str, int] = defaultdict(int)
     for row in labels:
         finding_id = row["finding_id"]
-        label = row.get("label") or row.get("adjudication", {}).get("label")
-        if finding_id in label_by_id:
+        adjudication = row.get("adjudication")
+        label = row.get("label") or (
+            adjudication.get("label") if isinstance(adjudication, dict) else None
+        )
+        if finding_id in seen_label_ids:
             raise ValueError(f"duplicate label finding_id: {finding_id}")
+        seen_label_ids.add(finding_id)
         if label in TRUE_LABELS or label == FALSE_LABEL:
             label_by_id[finding_id] = label
         else:
@@ -119,31 +137,45 @@ def classification_metrics(labels: list[dict[str, Any]], predictions: list[dict[
             tn += 1
 
     decided = tp + fp + tn + fn
-    total = decided + abstain_true + abstain_false
+    labeled_total = len(label_by_id)
+    missing_true = sum(label_by_id[finding_id] in TRUE_LABELS for finding_id in missing_predictions)
+    missing_false = len(missing_predictions) - missing_true
     precision = ratio(tp, tp + fp)
-    recall = ratio(tp, tp + fn)
-    f1 = None if precision is None or recall is None or precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    decided_recall = ratio(tp, tp + fn)
+    if precision is None or decided_recall is None:
+        f1 = None
+    elif precision + decided_recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * decided_recall / (precision + decided_recall)
     specificity = ratio(tn, tn + fp)
-    fp_removal = ratio(tn, tn + fp)
+    end_to_end_tp_retention = ratio(tp, tp + fn + abstain_true + missing_true)
+    end_to_end_fp_removal = ratio(tn, tn + fp + abstain_false + missing_false)
 
     return {
         "positive_class": "real_vulnerability",
         "confusion_matrix_decided_only": {"tp": tp, "fp": fp, "tn": tn, "fn": fn},
         "metrics_decided_only": {
             "precision": precision,
-            "recall_tp_retention": recall,
+            "recall_tp_retention": decided_recall,
             "f1": f1,
             "specificity": specificity,
-            "false_positive_removal_rate": fp_removal,
             "accuracy": ratio(tp + tn, decided),
         },
+        "metrics_end_to_end": {
+            "tp_retention": end_to_end_tp_retention,
+            "false_positive_removal_rate": end_to_end_fp_removal,
+        },
         "coverage": {
-            "labeled_total": total,
+            "labeled_total": labeled_total,
             "decided": decided,
             "abstained": abstain_true + abstain_false,
-            "selective_coverage": ratio(decided, total),
+            "missing": len(missing_predictions),
+            "selective_coverage": ratio(decided, labeled_total),
             "abstain_on_true": abstain_true,
             "abstain_on_false": abstain_false,
+            "missing_on_true": missing_true,
+            "missing_on_false": missing_false,
         },
         "excluded_labels": dict(sorted(excluded_label_counts.items())),
         "missing_predictions": sorted(missing_predictions),

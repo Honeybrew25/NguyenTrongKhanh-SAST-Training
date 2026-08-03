@@ -3,19 +3,42 @@
   "rules": {
     "root": "rules/semgrep-rules",
     "commit": "40b8c63f75dc7c22c8a77482d73bfb864b146f7e",
-    "engines_share_rules": true
+    "engines_share_rules": true,
+    "language_configs": {
+      "python": ["python"],
+      "javascript": ["javascript"],
+      "typescript": ["javascript", "typescript"],
+      "go": ["go"]
+    },
+    "language_extensions": {
+      "python": [".py"],
+      "javascript": [".js", ".jsx", ".mjs", ".cjs"],
+      "typescript": [".ts", ".tsx", ".mts", ".cts"],
+      "go": [".go"]
+    },
+    "validated_rule_counts": {
+      "python": 378,
+      "javascript": 182,
+      "typescript": 30,
+      "go": 84
+    }
   },
   "scan": {
     "timeout_seconds_per_rule": 30,
+    "job_timeout_seconds": 1800,
     "max_target_bytes": 1000000,
     "jobs": 4,
     "respect_git_ignore": true,
+    "git_ignore_parse_failure_fallback": "no_git_ignore_on_clean_snapshot",
+    "semgrep_oss_only": true,
+    "metrics": "off",
+    "opengrep_taint_intrafile": true,
     "exclude": [
       "**/node_modules/**",
       "**/.venv/**",
       "**/venv/**",
-      "**/vendor/**",
-      "**/dist/**",
+      "vendor",
+      "dist",
       "**/build/**",
       "**/.next/**",
       "**/coverage/**",

@@ -57,6 +57,11 @@
       "required": ["raw_result_ref", "scan_id"],
       "properties": {
         "raw_result_ref": {"type": "string", "minLength": 1},
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
         "scan_id": {"type": "string", "minLength": 1},
         "observed_by": {
           "type": "array",

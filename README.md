@@ -23,12 +23,99 @@ uv run vulngym-audit --benchmark benchmark/VulnGym --output artifacts/manifests/
 uv run pytest
 ```
 
+Trên Windows, đặt `PYTHONUTF8=1` trước khi chạy scanner để đầu ra Unicode ổn định. File thực thi của scanner phải đúng phiên bản và SHA-256 trong `config/scanners.lock.json`; runner sẽ dừng nếu pin không khớp.
+
+## Pipeline quét và làm giàu
+
+Ví dụ dưới đây tái lập pilot ngày 2 trên đúng snapshot NLTK:
+
+```powershell
+$env:PYTHONUTF8 = "1"
+$scanId = "day2-pilot-nltk-final-20260803"
+$repo = "https://github.com/nltk/nltk"
+$commit = "40d0bc1d484a3458d6a63ecb5ba4957ab16ba14e"
+
+uv run vulngym-scan `
+  --manifest artifacts/manifests/vulngym-v0.1.4.json `
+  --scan-id $scanId `
+  --repo-url $repo `
+  --commit $commit
+```
+
+Mỗi lần chạy tạo một thư mục attempt bất biến chứa bản sao manifest/lock/profile, JSON, SARIF, log, checksum và status. Chạy lại cùng `scan-id` sẽ bỏ qua attempt đã thành công; chỉ dùng `--force` khi chủ ý tạo attempt mới.
+
+Full batch ngày 2 dùng cùng các input đã cố định và không đặt filter snapshot/scanner:
+
+```powershell
+$env:PYTHONUTF8 = "1"
+$env:GIT_CONFIG_COUNT = "1"
+$env:GIT_CONFIG_KEY_0 = "core.longpaths"
+$env:GIT_CONFIG_VALUE_0 = "true"
+$scanId = "day2-full-v2-20260803"
+
+uv run vulngym-scan `
+  --manifest artifacts/manifests/vulngym-v0.1.4.json `
+  --scan-id $scanId
+```
+
+Chạy lại đúng lệnh trên để resume; không thêm `--force` hoặc `--refresh`. Attempt `SUCCESS` và snapshot không có rule phù hợp được tái sử dụng, còn `FAILED`/`TIMEOUT` được tạo attempt retry mới. Scanner mặc định vẫn dùng `.gitignore`; nếu phiên bản scanner đã ghim không parse được ignore file, profile cho phép retry đúng clean snapshot bằng `--no-git-ignore`. Status lưu cả hai argv, log lỗi ban đầu và cờ `git_ignore_fallback_used`, nên ngoại lệ này không bị che giấu.
+
+Chuẩn hóa riêng finding bảo mật, gộp quan sát của hai engine rồi đối sánh theo canonical cluster:
+
+```powershell
+$scanBase = "artifacts/scans/$scanId/nltk__nltk/$commit"
+$queue = "artifacts/annotation-queue/$scanId"
+
+uv run vulngym-normalize `
+  --status "$scanBase/semgrep/attempts/0001/status.json" `
+  --category security `
+  --output "$queue/semgrep-security.jsonl" `
+  --summary "$queue/semgrep-security-summary.json"
+
+uv run vulngym-normalize `
+  --status "$scanBase/opengrep/attempts/0001/status.json" `
+  --category security `
+  --output "$queue/opengrep-security.jsonl" `
+  --summary "$queue/opengrep-security-summary.json"
+
+uv run vulngym-dedup `
+  --input "$queue/semgrep-security.jsonl" `
+  --input "$queue/opengrep-security.jsonl" `
+  --output "$queue/security-deduplicated.jsonl" `
+  --summary "$queue/security-dedup-summary.json"
+
+uv run vulngym-match `
+  --findings "$queue/security-deduplicated.jsonl" `
+  --canonical `
+  --output "$queue/canonical-security-matches.jsonl" `
+  --summary "$queue/canonical-security-match-summary.json"
+```
+
+Sau khi full batch kết thúc và mọi job đã có trạng thái cuối, chạy hậu xử lý toàn corpus:
+
+```powershell
+uv run vulngym-full-pipeline `
+  --scan-root "artifacts/scans/$scanId" `
+  --output-dir "artifacts/normalized/$scanId"
+```
+
+Lệnh này mặc định từ chối chốt output nếu chưa đủ ma trận 166 snapshot × 2 scanner hoặc còn job `RUNNING`, `FAILED`, `TIMEOUT`. Nó xác minh checksum raw input, normalize security finding, dedup, match canonical cluster và báo số parser warning; `unresolved_partial_files` đếm file partial mà không có engine còn lại scan sạch. `--allow-incomplete` chỉ dành cho kết quả tạm thời và không được dùng để tuyên bố Ngày 2 hoàn thành.
+
+Ở chế độ `--status`, normalizer xác minh checksum của raw output và ưu tiên các bản sao input bất biến trong attempt, đồng thời không đọc lại source mutable. Dữ liệu đã duyệt của pilot nằm tại `data/enriched/*.jsonl` và được kiểm tra trực tiếp bằng JSON Schema trong test suite.
+
+## Khi nào dùng CodeQL
+
+CodeQL là nhánh escalation cho finding thiếu hoặc có exploitation path không đầy đủ sau Semgrep/OpenGrep, đặc biệt với dataflow liên tệp. Trước khi bật phải cố định phiên bản CodeQL CLI và commit/query-pack, tạo database từ cùng snapshot rồi lưu SARIF có `codeFlows`. Normalizer hiện đã đọc được `codeFlows` CodeQL bằng `--format sarif --scanner codeql`.
+
+Không trộn số liệu CodeQL vào phép so sánh engine Semgrep/OpenGrep dùng chung rule: CodeQL dùng query semantics khác và phải được báo cáo như một baseline riêng. Xem `docs/day2-pilot-methodology.md`.
+
 ## Cấu trúc kho lưu trữ
 
 - `benchmark/VulnGym/`: bộ benchmark thượng nguồn đã được ghim phiên bản.
 - `rules/semgrep-rules/`: bộ quy tắc của trình quét đã được ghim phiên bản.
 - `config/scanners.lock.json`: tệp khóa phục vụ khả năng tái lập.
 - `schemas/`: các schema dành cho phát hiện đã chuẩn hóa và thẩm định.
+- `data/enriched/`: các finding đã được thẩm định cùng bằng chứng và nguồn gốc.
 - `src/vulngym_enrich/`: các công cụ kiểm tra, checkout, đối sánh và đánh giá.
 - `tests/`: các kiểm thử hồi quy.
 - `docs/`: tài liệu về chú thích và phương pháp luận.

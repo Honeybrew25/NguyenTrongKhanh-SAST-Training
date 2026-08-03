@@ -10,12 +10,21 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=9,<10"]
+dev = [
+  "jsonschema>=4.25,<5",
+  "pytest>=9,<10",
+]
 
 [project.scripts]
 vulngym-audit = "vulngym_enrich.audit:main"
 vulngym-checkout = "vulngym_enrich.checkout:main"
+vulngym-dedup = "vulngym_enrich.dedup:main"
 vulngym-evaluate = "vulngym_enrich.evaluator:main"
+vulngym-full-pipeline = "vulngym_enrich.full_pipeline:main"
+vulngym-match = "vulngym_enrich.candidate_matcher:main"
+vulngym-normalize = "vulngym_enrich.normalizer:main"
+vulngym-rules = "vulngym_enrich.rule_inventory:main"
+vulngym-scan = "vulngym_enrich.scanner:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vulngym_enrich"]
