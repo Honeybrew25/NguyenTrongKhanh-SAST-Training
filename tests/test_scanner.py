@@ -115,6 +115,7 @@ def _frozen_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
         "scan": {
             "timeout_seconds_per_rule": 30,
             "max_target_bytes": 1_000_000,
+            "max_memory_mb": 8192,
             "jobs": 4,
             "respect_git_ignore": True,
             "semgrep_oss_only": True,
@@ -160,6 +161,9 @@ def _assert_safe_process_call(argv: list[str], kwargs: dict[str, Any]) -> None:
     assert all(isinstance(value, str) for value in argv)
     assert kwargs["shell"] is False
     assert kwargs["env"]["PYTHONUTF8"] == "1"
+    if kwargs.get("text") is True:
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
 
 
 def test_successful_job_routes_language_and_records_complete_provenance(
@@ -275,6 +279,7 @@ def test_successful_job_routes_language_and_records_complete_provenance(
     assert argv[argv.index("--metrics") + 1] == "off"
     assert argv[argv.index("--timeout") + 1] == "30"
     assert argv[argv.index("--max-target-bytes") + 1] == "1000000"
+    assert argv[argv.index("--max-memory") + 1] == "8192"
     assert argv[argv.index("--jobs") + 1] == "4"
     assert "--use-git-ignore" in argv
     assert argv.count("--exclude") == 2
@@ -678,6 +683,16 @@ def test_scanner_timeout_kills_a_real_descendant_process(tmp_path: Path) -> None
         )
     time.sleep(2)
     assert not sentinel.exists()
+
+
+def test_scanner_output_uses_utf8_with_replacement(tmp_path: Path) -> None:
+    result = _REAL_RUN_SCANNER_PROCESS(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\x90')"],
+        cwd=tmp_path,
+        timeout=10,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "�"
 
 
 def test_select_snapshots_rejects_partially_matched_filters() -> None:

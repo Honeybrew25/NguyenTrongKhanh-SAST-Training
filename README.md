@@ -42,7 +42,7 @@ uv run vulngym-scan `
   --commit $commit
 ```
 
-Mỗi lần chạy tạo một thư mục attempt bất biến chứa bản sao manifest/lock/profile, JSON, SARIF, log, checksum và status. Chạy lại cùng `scan-id` sẽ bỏ qua attempt đã thành công; chỉ dùng `--force` khi chủ ý tạo attempt mới.
+Mỗi lần chạy tạo một thư mục attempt bất biến chứa bản sao manifest/lock/profile, JSON, SARIF, log, checksum và status. `run.json` tại gốc scan-id khóa checksum đầu vào, ruleset, phiên bản/hash binary và timeout chung cho toàn batch. Chạy lại cùng `scan-id` sẽ bỏ qua attempt đã thành công; runner từ chối trộn cấu hình khác kể cả khi có `--force`.
 
 Full batch ngày 2 dùng cùng các input đã cố định và không đặt filter snapshot/scanner:
 
@@ -51,14 +51,39 @@ $env:PYTHONUTF8 = "1"
 $env:GIT_CONFIG_COUNT = "1"
 $env:GIT_CONFIG_KEY_0 = "core.longpaths"
 $env:GIT_CONFIG_VALUE_0 = "true"
-$scanId = "day2-full-v2-20260803"
+$scanId = "day2-full-v4-20260804"
 
 uv run vulngym-scan `
   --manifest artifacts/manifests/vulngym-v0.1.4.json `
-  --scan-id $scanId
+  --scan-id $scanId `
+  --job-timeout-seconds 7200
 ```
 
-Chạy lại đúng lệnh trên để resume; không thêm `--force` hoặc `--refresh`. Attempt `SUCCESS` và snapshot không có rule phù hợp được tái sử dụng, còn `FAILED`/`TIMEOUT` được tạo attempt retry mới. Scanner mặc định vẫn dùng `.gitignore`; nếu phiên bản scanner đã ghim không parse được ignore file, profile cho phép retry đúng clean snapshot bằng `--no-git-ignore`. Status lưu cả hai argv, log lỗi ban đầu và cờ `git_ignore_fallback_used`, nên ngoại lệ này không bị che giấu.
+Full batch có thể chia thành bốn partition không giao nhau bằng script đã kiểm tra đúng 166 snapshot:
+
+```powershell
+.\scripts\run_day2_partitions.ps1 `
+  -ScanId $scanId `
+  -JobTimeoutSeconds 7200
+
+.\scripts\start_day2_finalizer.ps1 `
+  -ScanId $scanId `
+  -JobTimeoutSeconds 7200
+```
+
+Mỗi partition prefetch toàn bộ commit đã chọn theo từng repository trước khi tạo attempt. Mirror dùng ref `refs/vulngym/<sha>` và fetch nông đúng các SHA benchmark, tránh tải lịch sử ngoài phạm vi nhưng vẫn checkout/kiểm tra chính xác từng commit.
+
+Finalizer chạy nền, đợi các partition kết thúc rồi resume toàn batch tối đa ba pass. Chỉ khi scanner trả thành công, nó mới gọi full pipeline không có `--allow-incomplete`; trạng thái nằm trong `finalizer-status.json` tại gốc scan-id.
+
+Nếu bốn partition đang đồng thời bị chặn ở các job OpenGrep và máy còn ít nhất 10 GiB RAM trống, có thể thêm đúng một worker Semgrep ưu tiên thấp mà không đổi profile/provenance:
+
+```powershell
+.\scripts\start_day2_semgrep_accelerator.ps1 -ScanId $scanId
+```
+
+Worker này dùng khóa job chung và mặc định resume, nên chỉ xử lý Semgrep chưa thành công. Không khởi chạy nhiều accelerator trên máy 32 GiB RAM.
+
+Profile cố định `max_memory_mb=8192` cho cả hai engine; giá trị này được truyền thành `--max-memory` để một file/rule không chiếm hết RAM hệ thống. Chạy lại đúng timeout trên để resume; không thêm `--force` hoặc `--refresh`. Attempt `SUCCESS` và snapshot không có rule phù hợp được tái sử dụng, còn `FAILED`/`TIMEOUT` được tạo attempt retry mới. Job được khóa liên tiến trình nên các partition không thể tạo trùng attempt. Khi timeout, runner kết thúc cả process tree của scanner. Scanner mặc định vẫn dùng `.gitignore`; nếu phiên bản scanner đã ghim không parse được ignore file, profile cho phép retry đúng clean snapshot bằng `--no-git-ignore`. Status lưu cả hai argv, output/log lỗi ban đầu và cờ `git_ignore_fallback_used`, nên ngoại lệ này không bị che giấu.
 
 Chuẩn hóa riêng finding bảo mật, gộp quan sát của hai engine rồi đối sánh theo canonical cluster:
 
@@ -99,7 +124,7 @@ uv run vulngym-full-pipeline `
   --output-dir "artifacts/normalized/$scanId"
 ```
 
-Lệnh này mặc định từ chối chốt output nếu chưa đủ ma trận 166 snapshot × 2 scanner hoặc còn job `RUNNING`, `FAILED`, `TIMEOUT`. Nó xác minh checksum raw input, normalize security finding, dedup, match canonical cluster và báo số parser warning; `unresolved_partial_files` đếm file partial mà không có engine còn lại scan sạch. `--allow-incomplete` chỉ dành cho kết quả tạm thời và không được dùng để tuyên bố Ngày 2 hoàn thành.
+Lệnh này mặc định từ chối chốt output nếu chưa đủ ma trận 166 snapshot × 2 scanner hoặc còn job `RUNNING`, `FAILED`, `TIMEOUT`. Nó còn đối chiếu provenance của từng attempt với `run.json`, xác minh checksum raw input, normalize security finding, dedup, match canonical cluster và báo số parser warning; `unresolved_partial_files` đếm file partial mà không có engine còn lại scan sạch. `--allow-incomplete` chỉ dành cho kết quả tạm thời và không được dùng để tuyên bố Ngày 2 hoàn thành.
 
 Ở chế độ `--status`, normalizer xác minh checksum của raw output và ưu tiên các bản sao input bất biến trong attempt, đồng thời không đọc lại source mutable. Dữ liệu đã duyệt của pilot nằm tại `data/enriched/*.jsonl` và được kiểm tra trực tiếp bằng JSON Schema trong test suite.
 

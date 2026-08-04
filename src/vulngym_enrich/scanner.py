@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from .checkout import checkout_snapshot, interprocess_lock, repo_slug
+from .checkout import checkout_snapshot, ensure_mirror, interprocess_lock, repo_slug
 
 SUPPORTED_SCANNERS = ("semgrep", "opengrep")
 
@@ -267,6 +267,7 @@ def validate_configuration(
     scan = _object(scan_profile.get("scan"), "scan_profile.scan")
     _positive_number(scan.get("timeout_seconds_per_rule"), "scan_profile.scan.timeout_seconds_per_rule")
     _positive_int(scan.get("max_target_bytes"), "scan_profile.scan.max_target_bytes")
+    _positive_int(scan.get("max_memory_mb"), "scan_profile.scan.max_memory_mb")
     _positive_int(scan.get("jobs"), "scan_profile.scan.jobs")
     if not isinstance(scan.get("respect_git_ignore"), bool):
         raise ValueError("scan_profile.scan.respect_git_ignore must be a boolean")
@@ -521,6 +522,9 @@ def _subprocess_environment() -> dict[str, str]:
 def _run_process(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
     if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
         raise TypeError("subprocess argv must be a list of strings")
+    if kwargs.get("text") is True:
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "replace")
     return subprocess.run(
         argv,
         shell=False,
@@ -572,6 +576,8 @@ def _run_scanner_process(
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -730,6 +736,8 @@ def build_scan_argv(
             _number_argument(scan["timeout_seconds_per_rule"]),
             "--max-target-bytes",
             str(scan["max_target_bytes"]),
+            "--max-memory",
+            str(scan["max_memory_mb"]),
             "--jobs",
             str(scan["jobs"]),
             (
@@ -1353,6 +1361,7 @@ def run_batch(
     rule_configs: Sequence[Path] | None = None,
     force: bool = False,
     refresh: bool = False,
+    prefetch: bool = False,
     job_timeout_seconds: int | float | None = None,
     project_root: Path | None = None,
 ) -> dict[str, Any]:
@@ -1440,10 +1449,24 @@ def run_batch(
             "scanner_pins": scanner_pins,
             "execution": {
                 "job_timeout_seconds": effective_job_timeout,
+                "max_memory_mb": scan_profile["scan"]["max_memory_mb"],
+                "prefetch_selected_snapshots": prefetch,
                 "rule_config_override": [str(path) for path in override_configs],
             },
         },
     )
+
+    if prefetch:
+        commits_by_repo: dict[str, list[str]] = {}
+        for snapshot in selected_snapshots:
+            commits_by_repo.setdefault(snapshot["repo_url"], []).append(snapshot["commit"])
+        for repo_url in sorted(commits_by_repo):
+            ensure_mirror(
+                repo_url,
+                cache_root,
+                refresh=refresh,
+                required_commits=commits_by_repo[repo_url],
+            )
 
     jobs: list[dict[str, Any]] = []
     for snapshot in selected_snapshots:
@@ -1528,6 +1551,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-timeout-seconds", type=_argparse_positive_int)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument(
+        "--prefetch",
+        action="store_true",
+        help="fetch every selected commit per repository before creating scan attempts",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="create a new immutable attempt even when the latest attempt succeeded",
@@ -1551,6 +1579,7 @@ def main(argv: list[str] | None = None) -> int:
             rule_configs=args.rule_configs,
             force=args.force,
             refresh=args.refresh,
+            prefetch=args.prefetch,
             job_timeout_seconds=args.job_timeout_seconds,
         )
     except (OSError, RuntimeError, ValueError) as exc:

@@ -12,7 +12,7 @@
 
 Pilot này kiểm tra tính đúng đắn của pipeline trên ba snapshot, không phải phép đo đại diện cho toàn bộ 166 snapshot. Sáu job cuối đều lưu bản sao byte-for-byte của manifest, scanner lock và scan profile trong attempt.
 
-Khi mở rộng sang full batch, target-list preflight trên LiteLLM phát hiện Semgrep 1.171.0 lỗi parser với exclude glob `**/dist/**`. Pattern tương đương `dist` chọn thành công cùng tập target cần loại và được cố định trong profile full batch. Profile vẫn ưu tiên `.gitignore`; chỉ khi scanner báo đúng lỗi parser ignore, runner mới retry trên clean snapshot bằng `--no-git-ignore` và lưu riêng argv/log của lần đầu cùng cờ fallback trong status.
+Khi mở rộng sang full batch, target-list preflight phát hiện Semgrep 1.171.0 lỗi parser với hai exclude glob `**/dist/**` và `**/generated/**` trên các snapshot LiteLLM/OpenClaw. Các pattern tương đương `dist` và `generated` chọn thành công tập target cần loại và được cố định trong profile full batch. Profile vẫn ưu tiên `.gitignore`; chỉ khi scanner báo đúng lỗi parser ignore, runner mới retry trên clean snapshot bằng `--no-git-ignore` và lưu riêng argv/log của lần đầu cùng cờ fallback trong status. Một preflight vận hành trên Flowise cũng cho thấy OpenGrep có thể vượt 15 GiB RAM khi không giới hạn; full batch chính thức vì vậy cố định `--max-memory 8192` cho cả hai engine và dùng scan-id mới để không trộn các cấu hình thực thi.
 
 ## Kết quả đo của pilot
 

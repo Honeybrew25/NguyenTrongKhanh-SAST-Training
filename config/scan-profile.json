@@ -25,7 +25,8 @@
   },
   "scan": {
     "timeout_seconds_per_rule": 30,
-    "job_timeout_seconds": 1800,
+    "job_timeout_seconds": 7200,
+    "max_memory_mb": 8192,
     "max_target_bytes": 1000000,
     "jobs": 4,
     "respect_git_ignore": true,
@@ -42,7 +43,7 @@
       "**/build/**",
       "**/.next/**",
       "**/coverage/**",
-      "**/generated/**",
+      "generated",
       "**/third_party/**",
       "**/*.min.js"
     ],

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -14,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
-_GIT_TIMEOUT_SECONDS = 3600
+_GIT_TIMEOUT_SECONDS = 10_800
 _CLONE_ATTEMPTS = 3
 
 
@@ -90,6 +91,8 @@ def run_git(
             cwd=cwd,
             check=False,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout_seconds,
         )
@@ -123,8 +126,26 @@ def _remove_task_temporary_tree(path: Path, expected_parent: Path) -> None:
     parent = expected_parent.resolve()
     if resolved.parent != parent or not path.name.startswith("."):
         raise RuntimeError(f"refusing to remove non-temporary checkout path: {resolved}")
+
+    def remove_readonly(function, filename, error_info) -> None:
+        error = error_info[1]
+        if not isinstance(error, PermissionError):
+            raise error
+        os.chmod(filename, stat.S_IWRITE)
+        function(filename)
+
     if path.exists():
-        shutil.rmtree(path)
+        last_error: OSError | None = None
+        for attempt in range(1, 6):
+            try:
+                shutil.rmtree(path, onerror=remove_readonly)
+                return
+            except OSError as exc:
+                last_error = exc
+                if attempt < 5:
+                    time.sleep(0.2 * attempt)
+        assert last_error is not None
+        raise last_error
 
 
 def verify_snapshot_state(destination: Path, expected_commit: str) -> None:
@@ -141,8 +162,43 @@ def verify_snapshot_state(destination: Path, expected_commit: str) -> None:
         raise RuntimeError(f"cached snapshot is dirty: {preview}")
 
 
-def ensure_mirror(repo_url: str, cache_root: Path, refresh: bool = False) -> Path:
+def _validated_required_commits(required_commits: list[str] | None) -> tuple[str, ...]:
+    commits = tuple(dict.fromkeys(required_commits or ()))
+    for commit in commits:
+        if not _SHA40.fullmatch(commit):
+            raise ValueError(f"commit must be a full lowercase SHA-1: {commit}")
+    return commits
+
+
+def _commit_exists(mirror: Path, commit: str) -> bool:
+    try:
+        run_git(["cat-file", "-e", f"{commit}^{{commit}}"], cwd=mirror)
+    except RuntimeError:
+        return False
+    return True
+
+
+def _fetch_required_commits(mirror: Path, commits: tuple[str, ...]) -> None:
+    missing = [commit for commit in commits if not _commit_exists(mirror, commit)]
+    if not missing:
+        return
+    refspecs = [f"{commit}:refs/vulngym/{commit}" for commit in missing]
+    run_git(["fetch", "--no-tags", "--depth=1", "origin", *refspecs], cwd=mirror)
+    still_missing = [commit for commit in missing if not _commit_exists(mirror, commit)]
+    if still_missing:
+        raise RuntimeError(
+            "targeted mirror fetch did not materialize commits: " + ", ".join(still_missing)
+        )
+
+
+def ensure_mirror(
+    repo_url: str,
+    cache_root: Path,
+    refresh: bool = False,
+    required_commits: list[str] | None = None,
+) -> Path:
     slug = repo_slug(repo_url)
+    commits = _validated_required_commits(required_commits)
     mirror = cache_root / "mirrors" / f"{slug}.git"
     lock = cache_root / "locks" / f"mirror-{slug}.lock"
     with interprocess_lock(lock):
@@ -152,12 +208,22 @@ def ensure_mirror(repo_url: str, cache_root: Path, refresh: bool = False) -> Pat
             for attempt in range(1, _CLONE_ATTEMPTS + 1):
                 temporary = mirror.with_name(f".{mirror.name}.clone-{uuid.uuid4().hex}")
                 try:
-                    run_git(["clone", "--mirror", repo_url, str(temporary)])
+                    if commits:
+                        run_git(["init", "--bare", str(temporary)])
+                        run_git(["remote", "add", "origin", repo_url], cwd=temporary)
+                        _fetch_required_commits(temporary, commits)
+                    else:
+                        run_git(["clone", "--mirror", repo_url, str(temporary)])
                     temporary.replace(mirror)
                     break
-                except RuntimeError as exc:
+                except (OSError, RuntimeError) as exc:
                     failures.append(f"attempt {attempt}: {exc}")
-                    _remove_task_temporary_tree(temporary, mirror.parent)
+                    try:
+                        _remove_task_temporary_tree(temporary, mirror.parent)
+                    except OSError as cleanup_exc:
+                        failures.append(
+                            f"attempt {attempt} temporary cleanup failed: {cleanup_exc}"
+                        )
                     if attempt < _CLONE_ATTEMPTS:
                         time.sleep(min(2**attempt, 10))
             else:
@@ -169,6 +235,8 @@ def ensure_mirror(repo_url: str, cache_root: Path, refresh: bool = False) -> Pat
             run_git(["remote", "update", "--prune"], cwd=mirror)
         if run_git(["rev-parse", "--is-bare-repository"], cwd=mirror).stdout.strip() != "true":
             raise RuntimeError(f"cached mirror is not a valid bare repository: {mirror}")
+        if commits:
+            _fetch_required_commits(mirror, commits)
     return mirror
 
 
@@ -176,7 +244,9 @@ def checkout_snapshot(repo_url: str, commit: str, cache_root: Path, work_root: P
     if not _SHA40.fullmatch(commit):
         raise ValueError(f"commit must be a full lowercase SHA-1: {commit}")
     slug = repo_slug(repo_url)
-    mirror = ensure_mirror(repo_url, cache_root, refresh=refresh)
+    mirror = ensure_mirror(
+        repo_url, cache_root, refresh=refresh, required_commits=[commit]
+    )
     destination = work_root / slug / commit
     lock = work_root / ".locks" / f"snapshot-{slug}-{commit}.lock"
     with interprocess_lock(lock):
@@ -192,7 +262,14 @@ def checkout_snapshot(repo_url: str, commit: str, cache_root: Path, work_root: P
             raise RuntimeError(f"refusing to overwrite unmarked destination: {destination}")
         temporary = destination.with_name(f".{commit}.checkout-{uuid.uuid4().hex}")
         try:
-            run_git(["clone", "--no-checkout", "--shared", str(mirror), str(temporary)])
+            run_git(["init", str(temporary)])
+            alternates = temporary / ".git" / "objects" / "info" / "alternates"
+            alternates.parent.mkdir(parents=True, exist_ok=True)
+            alternates.write_text(
+                str((mirror / "objects").resolve()).replace("\\", "/") + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
             run_git(["checkout", "--detach", commit], cwd=temporary)
             actual = run_git(["rev-parse", "HEAD"], cwd=temporary).stdout.strip()
             if actual != commit:
@@ -216,10 +293,18 @@ def checkout_snapshot(repo_url: str, commit: str, cache_root: Path, work_root: P
 
 def prefetch_manifest(manifest_path: Path, cache_root: Path, refresh: bool = False) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    repo_urls = sorted({snapshot["repo_url"] for snapshot in manifest["snapshots"]})
+    commits_by_repo: dict[str, list[str]] = {}
+    for snapshot in manifest["snapshots"]:
+        commits_by_repo.setdefault(snapshot["repo_url"], []).append(snapshot["commit"])
+    repo_urls = sorted(commits_by_repo)
     for index, repo_url in enumerate(repo_urls, 1):
         print(f"[{index}/{len(repo_urls)}] mirror {repo_url}")
-        ensure_mirror(repo_url, cache_root, refresh=refresh)
+        ensure_mirror(
+            repo_url,
+            cache_root,
+            refresh=refresh,
+            required_commits=commits_by_repo[repo_url],
+        )
     return len(repo_urls)
 
 
