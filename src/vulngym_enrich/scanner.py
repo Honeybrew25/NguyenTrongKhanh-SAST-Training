@@ -16,13 +16,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from .checkout import checkout_snapshot, ensure_mirror, interprocess_lock, repo_slug
+from .checkout import (
+    InterprocessLockTimeout,
+    checkout_snapshot,
+    ensure_mirror,
+    interprocess_lock,
+    repo_slug,
+)
 
 SUPPORTED_SCANNERS = ("semgrep", "opengrep")
+
+_RETRY_POLICY_SCHEMA_VERSION = 1
+_MAX_COMPLETED_TIMEOUT_ATTEMPTS = 2
+_JOB_LOCK_TIMEOUT_SECONDS = 1
 
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SCAN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _ATTEMPT_DIRECTORY = re.compile(r"^\d{4,}$")
+_NESTED_DIRECTORY_EXCLUDE = re.compile(r"^\*\*/([^*?\[\]/\\]+)/\*\*$")
 _FROZEN_INPUT_FILENAMES = {
     "manifest": "manifest.json",
     "scanner_lock": "scanner-lock.json",
@@ -93,8 +104,23 @@ def _atomic_write_text(path: Path, text: str) -> None:
             temporary.unlink()
 
 
+def _atomic_write_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(value)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _canonical_json_text(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
 def _read_json_object(path: Path, label: str) -> dict[str, Any]:
@@ -240,6 +266,12 @@ def validate_configuration(
         scanner_config = _object(
             scanner_configs.get(scanner_name), f"scanner_lock.scanners.{scanner_name}"
         )
+        if "enabled" in scanner_config and not isinstance(
+            scanner_config["enabled"], bool
+        ):
+            raise ValueError(
+                f"scanner_lock.scanners.{scanner_name}.enabled must be a boolean"
+            )
         _string(scanner_config.get("version"), f"scanner_lock.scanners.{scanner_name}.version")
         if "local_path" in scanner_config:
             _string(
@@ -711,6 +743,7 @@ def build_scan_argv(
     scan_profile: dict[str, Any],
     attempt_directory: Path,
     respect_git_ignore: bool | None = None,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> list[str]:
     if scanner_name not in SUPPORTED_SCANNERS:
         raise ValueError(f"unsupported scanner: {scanner_name}")
@@ -751,7 +784,7 @@ def build_scan_argv(
             ),
         ]
     )
-    for pattern in scan["exclude"]:
+    for pattern in exclude_patterns if exclude_patterns is not None else scan["exclude"]:
         argv.extend(["--exclude", pattern])
     argv.extend(
         [
@@ -763,6 +796,23 @@ def build_scan_argv(
         ]
     )
     return argv
+
+
+def _semgrep_compatible_exclude_patterns(patterns: Sequence[str]) -> list[str]:
+    """Use equivalent directory-name globs that Semgrep 1.171.0 can parse.
+
+    Semgrep documents ``--exclude=tests`` as matching that directory at any
+    depth.  The pinned Windows build can nevertheless fail with
+    ``lexing: empty token`` for the equivalent ``**/tests/**`` spelling on
+    some snapshots.  This projection is used only after that exact parser
+    failure and is recorded in the immutable attempt status.
+    """
+
+    compatible: list[str] = []
+    for pattern in patterns:
+        match = _NESTED_DIRECTORY_EXCLUDE.fullmatch(pattern)
+        compatible.append(match.group(1) if match is not None else pattern)
+    return compatible
 
 
 def _as_text(value: str | bytes | None) -> str:
@@ -824,13 +874,45 @@ def _latest_attempt(scanner_directory: Path) -> tuple[int, Path, dict[str, Any] 
     return number, directory, status
 
 
+def _attempt_statuses(
+    scanner_directory: Path,
+) -> list[tuple[int, Path, dict[str, Any]]]:
+    """Read every attempt status, failing closed for retry-budget accounting."""
+
+    statuses: list[tuple[int, Path, dict[str, Any]]] = []
+    for number in _attempt_numbers(scanner_directory):
+        directory = scanner_directory / "attempts" / f"{number:04d}"
+        status = _read_json_object(directory / "status.json", "attempt status")
+        if status.get("attempt") != number:
+            raise ValueError(
+                f"attempt number mismatch in {directory / 'status.json'}: "
+                f"{status.get('attempt')!r} != {number}"
+            )
+        statuses.append((number, directory, status))
+    return statuses
+
+
+def _is_reusable_terminal_status(status: dict[str, Any]) -> bool:
+    error = status.get("error") or {}
+    return status.get("status") == "SUCCESS" or (
+        status.get("status") == "SKIPPED"
+        and isinstance(error, dict)
+        and error.get("type") == "NoApplicableRuleConfig"
+    )
+
+
+def _completed_timeout_count(statuses: Sequence[tuple[int, Path, dict[str, Any]]]) -> int:
+    return sum(status.get("status") == "TIMEOUT" for _, _, status in statuses)
+
+
 def _write_scanner_pointer(
     scanner_directory: Path,
     attempt_directory: Path,
     status: dict[str, Any],
+    scheduling: dict[str, Any] | None = None,
 ) -> None:
     pointer = {
-        "schema_version": 1,
+        "schema_version": 2 if scheduling is not None else 1,
         "scan_id": status["scan_id"],
         "repo_url": status["repo_url"],
         "commit": status["commit"],
@@ -842,6 +924,8 @@ def _write_scanner_pointer(
         ).replace("\\", "/"),
         "updated_at": _utc_now(),
     }
+    if scheduling is not None:
+        pointer["scheduling"] = scheduling
     _atomic_write_json(scanner_directory / "status.json", pointer)
 
 
@@ -852,6 +936,80 @@ def _write_attempt_status(
 ) -> None:
     _atomic_write_json(attempt_directory / "status.json", status)
     _write_scanner_pointer(scanner_directory, attempt_directory, status)
+
+
+def _quarantine_scheduling(
+    *, timeout_count: int, limit: int, policy_sha256: str
+) -> dict[str, Any]:
+    return {
+        "state": "QUARANTINED",
+        "reason": "timeout_budget_exhausted",
+        "matching_timeout_attempts": timeout_count,
+        "limit": limit,
+        "policy_sha256": policy_sha256,
+        "decided_at": _utc_now(),
+    }
+
+
+def _write_quarantine_pointer(
+    scanner_directory: Path,
+    attempt_directory: Path,
+    status: dict[str, Any],
+    *,
+    timeout_count: int,
+    limit: int,
+    policy_sha256: str,
+) -> dict[str, Any]:
+    scheduling = _quarantine_scheduling(
+        timeout_count=timeout_count,
+        limit=limit,
+        policy_sha256=policy_sha256,
+    )
+    _write_scanner_pointer(
+        scanner_directory,
+        attempt_directory,
+        status,
+        scheduling=scheduling,
+    )
+    return scheduling
+
+
+def _reconcile_orphaned_running_attempt(
+    scanner_directory: Path,
+    attempt_directory: Path,
+    status: dict[str, Any],
+    *,
+    update_pointer: bool = True,
+) -> dict[str, Any]:
+    """Finalize a lock-free RUNNING attempt as interrupted, never as a timeout."""
+
+    if status.get("status") != "RUNNING":
+        return status
+    message = (
+        "attempt was left RUNNING after its job lock was released; "
+        "the owning scanner process was interrupted"
+    )
+    stdout_path = attempt_directory / "stdout.log"
+    stderr_path = attempt_directory / "stderr.log"
+    if not stdout_path.exists():
+        _atomic_write_text(stdout_path, "")
+    if not stderr_path.exists():
+        _atomic_write_text(stderr_path, message + "\n")
+    interrupted = dict(status)
+    interrupted.update(
+        {
+            "status": "INTERRUPTED",
+            "ended_at": _utc_now(),
+            "duration_seconds": None,
+            "exit_code": None,
+            "error": {"type": "OrphanedAttempt", "message": message},
+            "checksums": _file_checksums(attempt_directory),
+        }
+    )
+    _atomic_write_json(attempt_directory / "status.json", interrupted)
+    if update_pointer:
+        _write_scanner_pointer(scanner_directory, attempt_directory, interrupted)
+    return interrupted
 
 
 def _successful_resume_conflicts(
@@ -927,6 +1085,43 @@ def _ensure_scan_run_metadata(scan_root: Path, metadata: dict[str, Any]) -> None
                 )
             return
         _atomic_write_json(run_path, metadata)
+
+
+def _retry_policy(scan_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": _RETRY_POLICY_SCHEMA_VERSION,
+        "scan_id": scan_id,
+        "policy": "bounded-timeout-retry",
+        "max_completed_timeout_attempts": _MAX_COMPLETED_TIMEOUT_ATTEMPTS,
+        "job_lock_timeout_seconds": _JOB_LOCK_TIMEOUT_SECONDS,
+        "manual_override_requires_exact_job": True,
+    }
+
+
+def _ensure_retry_policy(scan_root: Path, scan_id: str) -> tuple[dict[str, Any], str]:
+    """Create or validate the scan-local immutable retry scheduling policy."""
+
+    policy_path = scan_root / "retry-policy.json"
+    expected = _retry_policy(scan_id)
+    expected_text = _canonical_json_text(expected)
+    expected_bytes = expected_text.encode("utf-8")
+    with interprocess_lock(scan_root / ".retry-policy.lock", timeout_seconds=300):
+        if policy_path.exists():
+            try:
+                observed_bytes = policy_path.read_bytes()
+            except OSError as exc:
+                raise RuntimeError(f"could not read retry policy: {policy_path}: {exc}") from exc
+            if observed_bytes != expected_bytes:
+                raise RuntimeError(
+                    f"retry policy changed for scan-id {scan_id}; use a new scan-id "
+                    "instead of modifying retry-policy.json"
+                )
+            observed = _read_json_object(policy_path, "retry policy")
+            if observed != expected:
+                raise RuntimeError(f"retry policy is invalid for scan-id {scan_id}")
+        else:
+            _atomic_write_bytes(policy_path, expected_bytes)
+    return expected, hashlib.sha256(expected_bytes).hexdigest()
 
 
 def _file_checksums(attempt_directory: Path) -> dict[str, str]:
@@ -1053,6 +1248,8 @@ def _run_job(
     force: bool,
     refresh: bool,
     job_timeout_seconds: int | float | None,
+    retry_override_reason: str | None = None,
+    retry_policy_sha256: str | None = None,
 ) -> dict[str, Any]:
     scanner_directory = (
         output_root
@@ -1141,6 +1338,14 @@ def _run_job(
         "checksums": {},
         "inputs": input_provenance,
         "error": None,
+        "retry_override": (
+            {
+                "reason": retry_override_reason,
+                "policy_sha256": retry_policy_sha256,
+            }
+            if retry_override_reason is not None
+            else None
+        ),
     }
     _write_attempt_status(scanner_directory, attempt_directory, status)
 
@@ -1257,6 +1462,13 @@ def _run_job(
                 scan_profile,
                 attempt_directory,
                 respect_git_ignore=False,
+                exclude_patterns=(
+                    _semgrep_compatible_exclude_patterns(
+                        scan_profile["scan"]["exclude"]
+                    )
+                    if scanner_name == "semgrep"
+                    else None
+                ),
             )
             status["argv"] = fallback_argv
             status["argv_attempts"].append(
@@ -1267,6 +1479,14 @@ def _run_job(
                 "respect_git_ignore_effective": False,
                 "git_ignore_fallback_used": True,
                 "git_ignore_fallback_reason": "scanner_git_ignore_parser_failure",
+                "exclude_glob_fallback_used": scanner_name == "semgrep",
+                "effective_excludes": (
+                    _semgrep_compatible_exclude_patterns(
+                        scan_profile["scan"]["exclude"]
+                    )
+                    if scanner_name == "semgrep"
+                    else list(scan_profile["scan"]["exclude"])
+                ),
             }
             status["logs"].update(
                 {
@@ -1345,6 +1565,142 @@ def _run_job(
     }
 
 
+def _job_priority(
+    scanner_directory: Path,
+    *,
+    force: bool,
+    retry_quarantined: bool,
+    timeout_limit: int,
+) -> int:
+    """Return an advisory priority; state is re-evaluated after locking."""
+
+    try:
+        statuses = _attempt_statuses(scanner_directory)
+    except (OSError, ValueError):
+        # Planning is advisory and may race with the short interval between an
+        # owner creating an attempt directory and atomically writing status.json.
+        # The strict read is repeated after acquiring the job lock.
+        return 3
+    if not statuses:
+        return 0
+    latest_status = statuses[-1][2]
+    if _is_reusable_terminal_status(latest_status):
+        return 1 if force else 4
+    timeout_count = _completed_timeout_count(statuses)
+    if timeout_count >= timeout_limit:
+        return 2 if retry_quarantined else 3
+    latest_value = latest_status.get("status")
+    if latest_value in {"FAILED", "INTERRUPTED"}:
+        return 1
+    if latest_value == "TIMEOUT":
+        return 2
+    if latest_value == "RUNNING":
+        return 3
+    return 1
+
+
+def _run_job_with_retry_policy(
+    *,
+    snapshot: dict[str, Any],
+    scanner_name: str,
+    retry_policy: dict[str, Any],
+    retry_policy_sha256: str,
+    retry_quarantined: bool,
+    retry_reason: str | None,
+    run_job_arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Re-evaluate one job under its lock and enforce its timeout budget."""
+
+    scanner_directory = (
+        run_job_arguments["output_root"]
+        / run_job_arguments["scan_id"]
+        / repo_slug(snapshot["repo_url"])
+        / snapshot["commit"]
+        / scanner_name
+    )
+    statuses = _attempt_statuses(scanner_directory)
+    last_index = len(statuses) - 1
+    for index, (number, directory, attempt_status) in enumerate(statuses):
+        if attempt_status.get("status") != "RUNNING":
+            continue
+        reconciled = _reconcile_orphaned_running_attempt(
+            scanner_directory,
+            directory,
+            attempt_status,
+            update_pointer=index == last_index,
+        )
+        statuses[index] = (number, directory, reconciled)
+
+    timeout_limit = int(retry_policy["max_completed_timeout_attempts"])
+    timeout_count = _completed_timeout_count(statuses)
+    latest = statuses[-1] if statuses else None
+    latest_is_complete = latest is not None and _is_reusable_terminal_status(latest[2])
+
+    if retry_quarantined:
+        if latest_is_complete or timeout_count < timeout_limit:
+            raise RuntimeError(
+                "--retry-quarantined selected a job that is not currently quarantined"
+            )
+    elif latest is not None and not latest_is_complete and timeout_count >= timeout_limit:
+        scheduling = _write_quarantine_pointer(
+            scanner_directory,
+            latest[1],
+            latest[2],
+            timeout_count=timeout_count,
+            limit=timeout_limit,
+            policy_sha256=retry_policy_sha256,
+        )
+        return {
+            "repo_url": snapshot["repo_url"],
+            "commit": snapshot["commit"],
+            "scanner": scanner_name,
+            "status": "QUARANTINED",
+            "attempt_status": latest[2].get("status"),
+            "reason": scheduling["reason"],
+            "attempt": latest[0],
+            "status_path": str(latest[1] / "status.json"),
+            "scheduling_state": scheduling["state"],
+        }
+
+    result = _run_job(
+        snapshot=snapshot,
+        scanner_name=scanner_name,
+        retry_override_reason=retry_reason if retry_quarantined else None,
+        retry_policy_sha256=retry_policy_sha256 if retry_quarantined else None,
+        **run_job_arguments,
+    )
+    statuses = _attempt_statuses(scanner_directory)
+    latest = statuses[-1]
+    timeout_count = _completed_timeout_count(statuses)
+    if not _is_reusable_terminal_status(latest[2]) and timeout_count >= timeout_limit:
+        scheduling = _write_quarantine_pointer(
+            scanner_directory,
+            latest[1],
+            latest[2],
+            timeout_count=timeout_count,
+            limit=timeout_limit,
+            policy_sha256=retry_policy_sha256,
+        )
+        quarantined = dict(result)
+        quarantined.update(
+            {
+                "status": "QUARANTINED",
+                "attempt_status": latest[2].get("status"),
+                "reason": scheduling["reason"],
+                "scheduling_state": scheduling["state"],
+            }
+        )
+        return quarantined
+
+    completed = result.get("status") == "SUCCESS" or (
+        result.get("status") == "SKIPPED"
+        and result.get("reason")
+        in {"existing_success", "existing_no_applicable_rule_config", "no_applicable_rule_config"}
+    )
+    result["scheduling_state"] = "COMPLETE" if completed else "RETRYABLE"
+    return result
+
+
 def run_batch(
     *,
     manifest_path: Path,
@@ -1364,6 +1720,8 @@ def run_batch(
     prefetch: bool = False,
     job_timeout_seconds: int | float | None = None,
     project_root: Path | None = None,
+    retry_quarantined: bool = False,
+    retry_reason: str | None = None,
 ) -> dict[str, Any]:
     if not _SCAN_ID.fullmatch(scan_id):
         raise ValueError(
@@ -1372,6 +1730,25 @@ def run_batch(
         )
     if job_timeout_seconds is not None:
         _positive_number(job_timeout_seconds, "job_timeout_seconds")
+    if retry_quarantined:
+        if force:
+            raise ValueError("--retry-quarantined cannot be combined with --force")
+        if not isinstance(retry_reason, str) or not retry_reason.strip():
+            raise ValueError("--retry-reason is required with --retry-quarantined")
+        if (
+            repo_urls is None
+            or len(repo_urls) != 1
+            or commits is None
+            or len(commits) != 1
+            or scanners is None
+            or len(scanners) != 1
+        ):
+            raise ValueError(
+                "--retry-quarantined requires exactly one --repo-url, --commit, and --scanner"
+            )
+        retry_reason = retry_reason.strip()
+    elif retry_reason is not None:
+        raise ValueError("--retry-reason requires --retry-quarantined")
 
     root = (project_root or Path.cwd()).resolve()
     manifest_path = _resolve_path(Path(manifest_path), root)
@@ -1386,7 +1763,14 @@ def run_batch(
     )
     selected_snapshots = select_snapshots(manifest, repo_urls, commits, limit)
 
-    selected_scanners = list(scanners or SUPPORTED_SCANNERS)
+    if scanners is None:
+        selected_scanners = [
+            scanner_name
+            for scanner_name in SUPPORTED_SCANNERS
+            if scanner_lock["scanners"][scanner_name].get("enabled", True)
+        ]
+    else:
+        selected_scanners = list(scanners)
     if not selected_scanners:
         raise ValueError("at least one scanner must be selected")
     if len(set(selected_scanners)) != len(selected_scanners):
@@ -1394,6 +1778,13 @@ def run_batch(
     unsupported = sorted(set(selected_scanners) - set(SUPPORTED_SCANNERS))
     if unsupported:
         raise ValueError(f"unsupported scanners: {unsupported}")
+    disabled = sorted(
+        scanner_name
+        for scanner_name in selected_scanners
+        if not scanner_lock["scanners"][scanner_name].get("enabled", True)
+    )
+    if disabled:
+        raise ValueError(f"disabled scanners cannot be selected: {disabled}")
 
     rules_root, routed_configs, override_configs, language_extensions = (
         resolve_rule_configs(scan_profile, root, rule_configs)
@@ -1432,7 +1823,7 @@ def run_batch(
     )
 
     scanner_pins = {}
-    for scanner_name in SUPPORTED_SCANNERS:
+    for scanner_name in selected_scanners:
         scanner_config = scanner_lock["scanners"][scanner_name]
         scanner_pins[scanner_name] = {
             "version": scanner_config["version"],
@@ -1455,6 +1846,9 @@ def run_batch(
             },
         },
     )
+    retry_policy, retry_policy_sha256 = _ensure_retry_policy(
+        output_root / scan_id, scan_id
+    )
 
     if prefetch:
         commits_by_repo: dict[str, list[str]] = {}
@@ -1468,7 +1862,7 @@ def run_batch(
                 required_commits=commits_by_repo[repo_url],
             )
 
-    jobs: list[dict[str, Any]] = []
+    job_specs: list[tuple[int, str, str, str, dict[str, Any]]] = []
     for snapshot in selected_snapshots:
         for scanner_name in selected_scanners:
             scanner_directory = (
@@ -1478,39 +1872,100 @@ def run_batch(
                 / snapshot["commit"]
                 / scanner_name
             )
+            priority = _job_priority(
+                scanner_directory,
+                force=force,
+                retry_quarantined=retry_quarantined,
+                timeout_limit=int(retry_policy["max_completed_timeout_attempts"]),
+            )
+            job_specs.append(
+                (
+                    priority,
+                    snapshot["repo_url"],
+                    snapshot["commit"],
+                    scanner_name,
+                    snapshot,
+                )
+            )
+
+    jobs: list[dict[str, Any]] = []
+    for _, _, _, scanner_name, snapshot in sorted(
+        job_specs, key=lambda item: item[:4]
+    ):
+        scanner_directory = (
+            output_root
+            / scan_id
+            / repo_slug(snapshot["repo_url"])
+            / snapshot["commit"]
+            / scanner_name
+        )
+        job_lock_path = scanner_directory / ".job.lock"
+        try:
             with interprocess_lock(
-                scanner_directory / ".job.lock", timeout_seconds=14_400
+                job_lock_path,
+                timeout_seconds=int(retry_policy["job_lock_timeout_seconds"]),
             ):
                 jobs.append(
-                    _run_job(
+                    _run_job_with_retry_policy(
                         snapshot=snapshot,
                         scanner_name=scanner_name,
-                        executable=executables[scanner_name],
-                        observed_version=observed_versions[scanner_name],
-                        executable_sha256=executable_checksums[scanner_name],
-                        ruleset_commit=observed_ruleset_commit,
-                        scan_profile=scan_profile,
-                        routed_configs=routed_configs,
-                        override_configs=override_configs,
-                        language_extensions=language_extensions,
-                        scan_id=scan_id,
-                        cache_root=cache_root,
-                        work_root=work_root,
-                        output_root=output_root,
-                        input_provenance=input_provenance,
-                        force=force,
-                        refresh=refresh,
-                        job_timeout_seconds=effective_job_timeout,
+                        retry_policy=retry_policy,
+                        retry_policy_sha256=retry_policy_sha256,
+                        retry_quarantined=retry_quarantined,
+                        retry_reason=retry_reason,
+                        run_job_arguments={
+                            "executable": executables[scanner_name],
+                            "observed_version": observed_versions[scanner_name],
+                            "executable_sha256": executable_checksums[scanner_name],
+                            "ruleset_commit": observed_ruleset_commit,
+                            "scan_profile": scan_profile,
+                            "routed_configs": routed_configs,
+                            "override_configs": override_configs,
+                            "language_extensions": language_extensions,
+                            "scan_id": scan_id,
+                            "cache_root": cache_root,
+                            "work_root": work_root,
+                            "output_root": output_root,
+                            "input_provenance": input_provenance,
+                            "force": force,
+                            "refresh": refresh,
+                            "job_timeout_seconds": effective_job_timeout,
+                        },
                     )
                 )
+        except InterprocessLockTimeout as exc:
+            if exc.path.resolve() != job_lock_path.resolve():
+                raise
+            latest = _latest_attempt(scanner_directory)
+            jobs.append(
+                {
+                    "repo_url": snapshot["repo_url"],
+                    "commit": snapshot["commit"],
+                    "scanner": scanner_name,
+                    "status": "BUSY",
+                    "reason": "job_lock_held",
+                    "attempt": latest[0] if latest is not None else None,
+                    "status_path": str(latest[1] / "status.json") if latest is not None else None,
+                    "scheduling_state": "BUSY",
+                }
+            )
 
     counts = Counter(job["status"] for job in jobs)
+    scheduling_counts = Counter(job.get("scheduling_state", "UNKNOWN") for job in jobs)
     return {
         "schema_version": 1,
         "scan_id": scan_id,
         "snapshots_selected": len(selected_snapshots),
         "jobs_total": len(jobs),
         "status_counts": dict(sorted(counts.items())),
+        "scheduling_counts": dict(sorted(scheduling_counts.items())),
+        "retry_policy": {
+            "path": str(output_root / scan_id / "retry-policy.json"),
+            "sha256": retry_policy_sha256,
+            "max_completed_timeout_attempts": retry_policy[
+                "max_completed_timeout_attempts"
+            ],
+        },
         "jobs": jobs,
     }
 
@@ -1560,6 +2015,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="create a new immutable attempt even when the latest attempt succeeded",
     )
+    parser.add_argument(
+        "--retry-quarantined",
+        action="store_true",
+        help="manually retry one explicitly selected quarantined job",
+    )
+    parser.add_argument(
+        "--retry-reason",
+        help="required audit reason for --retry-quarantined",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -1581,13 +2045,22 @@ def main(argv: list[str] | None = None) -> int:
             refresh=args.refresh,
             prefetch=args.prefetch,
             job_timeout_seconds=args.job_timeout_seconds,
+            retry_quarantined=args.retry_quarantined,
+            retry_reason=args.retry_reason,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 1 if any(status in report["status_counts"] for status in ("FAILED", "TIMEOUT")) else 0
+    statuses = report["status_counts"]
+    if any(status in statuses for status in ("FAILED", "TIMEOUT", "INTERRUPTED")):
+        return 1
+    if "BUSY" in statuses:
+        return 4
+    if "QUARANTINED" in statuses:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

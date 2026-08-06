@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/verifier-run.schema.json",
+  "title": "Reproducible blind-verifier run manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_at",
+    "status",
+    "complete",
+    "evaluation_mode",
+    "input",
+    "predictions",
+    "profile",
+    "prompt",
+    "corpus_proof",
+    "response_schema",
+    "prediction_schema",
+    "controller",
+    "provider",
+    "blindness",
+    "source_policy",
+    "case_counts",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["COMPLETE", "INCOMPLETE"]},
+    "complete": {"type": "boolean"},
+    "evaluation_mode": {"enum": ["OFFICIAL", "DEVELOPMENT"]},
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "source_sha256", "frozen_copy", "sha256", "records"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "source_sha256": {"$ref": "#/$defs/sha256"},
+        "frozen_copy": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "records": {"type": "integer", "minimum": 1}
+      }
+    },
+    "predictions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "records"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "records": {"type": "integer", "minimum": 0}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "profile_id", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "profile_id": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "corpus_proof": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["path", "sha256", "complete", "input_sha256", "records"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "complete": {"const": true},
+        "input_sha256": {"$ref": "#/$defs/sha256"},
+        "records": {"type": "integer", "minimum": 1}
+      }
+    },
+    "response_schema": {"$ref": "#/$defs/fileIdentity"},
+    "prediction_schema": {"$ref": "#/$defs/fileIdentity"},
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "path", "sha256"],
+      "properties": {
+        "protocol_version": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "model", "model_explicitly_pinned", "usage"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "model": {"type": ["string", "null"]},
+        "model_explicitly_pinned": {"type": "boolean"},
+        "usage": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "blindness": {"type": "object", "additionalProperties": {"type": "boolean"}},
+    "source_policy": {"type": "object", "additionalProperties": true},
+    "case_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "success", "failed"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 1},
+        "success": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["schema_version", "status", "identity", "started_at", "completed_at", "elapsed_seconds", "provider_usage"],
+        "properties": {
+          "schema_version": {"const": 1},
+          "status": {"enum": ["SUCCESS", "FAILED"]},
+          "identity": {"type": "object"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "elapsed_seconds": {"type": "number", "minimum": 0},
+          "provider_usage": {"type": "object"},
+          "prediction_sha256": {"$ref": "#/$defs/sha256"},
+          "error_type": {"type": "string"},
+          "error": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

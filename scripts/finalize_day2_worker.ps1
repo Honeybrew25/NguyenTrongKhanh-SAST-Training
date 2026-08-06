@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $scanRoot = Join-Path $projectRoot "artifacts/scans/$ScanId"
-$outputRoot = Join-Path $projectRoot "artifacts/normalized/$ScanId"
+$outputRoot = Join-Path $projectRoot "artifacts/normalized/$ScanId-semgrep-only"
 $statePath = Join-Path $scanRoot "finalizer-status.json"
 $scannerExecutable = Join-Path $projectRoot ".venv/Scripts/vulngym-scan.exe"
 $pipelineExecutable = Join-Path $projectRoot ".venv/Scripts/vulngym-full-pipeline.exe"
@@ -59,41 +59,97 @@ while ($true) {
 }
 
 $resumeSucceeded = $false
-for ($pass = 1; $pass -le $RetryPasses; $pass++) {
-    Write-FinalizerState -Status "RESUMING" -ResumePass $pass
+$retryablePasses = 0
+$resumeInvocation = 0
+$busyWaits = 0
+while (-not $resumeSucceeded) {
+    $resumeInvocation++
+    Write-FinalizerState -Status "RESUMING" -ResumePass $resumeInvocation
     & $scannerExecutable `
         --manifest artifacts/manifests/vulngym-v0.1.4.json `
         --scan-id $ScanId `
         --job-timeout-seconds $JobTimeoutSeconds `
-        --prefetch
+        --prefetch `
+        --scanner semgrep
     $scannerExitCode = $LASTEXITCODE
     if ($scannerExitCode -eq 0) {
         $resumeSucceeded = $true
         break
     }
-    Write-FinalizerState `
-        -Status "RESUME_RETRY_REQUIRED" `
-        -ResumePass $pass `
-        -ExitCode $scannerExitCode `
-        -Detail "A later pass will retry FAILED/TIMEOUT or fill missing jobs."
+
+    if ($scannerExitCode -eq 3) {
+        Write-FinalizerState `
+            -Status "BLOCKED_QUARANTINED" `
+            -ResumePass $resumeInvocation `
+            -ExitCode $scannerExitCode `
+            -Detail (
+                "Scanner reported settled quarantine blockers. No later automatic " +
+                "resume pass or full pipeline was run."
+            )
+        exit $scannerExitCode
+    }
+
+    if ($scannerExitCode -eq 4) {
+        $busyWaits++
+        Write-FinalizerState `
+            -Status "BUSY" `
+            -ResumePass $resumeInvocation `
+            -ExitCode $scannerExitCode `
+            -Detail (
+                "Scanner reported a live job-lock owner. The finalizer will wait " +
+                "and poll without consuming the retryable-pass budget."
+            )
+        $busyDelaySeconds = [Math]::Min(
+            $PollSeconds * [Math]::Min($busyWaits, 10),
+            300
+        )
+        Start-Sleep -Seconds $busyDelaySeconds
+        continue
+    } elseif ($scannerExitCode -eq 1) {
+        $retryablePasses++
+        $busyWaits = 0
+        if ($retryablePasses -ge $RetryPasses) {
+            Write-FinalizerState `
+                -Status "BLOCKED_AFTER_RETRIES" `
+                -ResumePass $resumeInvocation `
+                -ExitCode $scannerExitCode `
+                -Detail (
+                    "Scanner batch still had retryable failures after " +
+                    "$retryablePasses bounded retryable passes; no full pipeline was run."
+                )
+            exit $scannerExitCode
+        }
+        Write-FinalizerState `
+            -Status "RESUME_RETRY_REQUIRED" `
+            -ResumePass $resumeInvocation `
+            -ExitCode $scannerExitCode `
+            -Detail "A later bounded pass may retry FAILED/TIMEOUT or fill missing jobs."
+    } else {
+        Write-FinalizerState `
+            -Status "BLOCKED_SCANNER_ERROR" `
+            -ResumePass $resumeInvocation `
+            -ExitCode $scannerExitCode `
+            -Detail (
+                "Scanner exited with a terminal configuration or runtime error. " +
+                "No later resume pass or full pipeline was run."
+            )
+        exit $scannerExitCode
+    }
+
+    $retryDelaySeconds = [Math]::Min($PollSeconds * $retryablePasses, 300)
+    Start-Sleep -Seconds $retryDelaySeconds
 }
 
-if (-not $resumeSucceeded) {
-    Write-FinalizerState `
-        -Status "BLOCKED_AFTER_RETRIES" `
-        -ResumePass $RetryPasses `
-        -ExitCode $scannerExitCode `
-        -Detail "Full pipeline was not run because the scanner batch did not pass."
-    exit $scannerExitCode
-}
-
-Write-FinalizerState -Status "RUNNING_FULL_PIPELINE" -ResumePass $pass
-& $pipelineExecutable --scan-root $scanRoot --output-dir $outputRoot
+Write-FinalizerState -Status "RUNNING_FULL_PIPELINE" -ResumePass $resumeInvocation
+& $pipelineExecutable `
+    --scan-root $scanRoot `
+    --output-dir $outputRoot `
+    --scanner semgrep
 $pipelineExitCode = $LASTEXITCODE
 if ($pipelineExitCode -ne 0) {
     Write-FinalizerState `
         -Status "PIPELINE_BLOCKED" `
-        -ResumePass $pass `
+        -ResumePass $resumeInvocation `
         -ExitCode $pipelineExitCode `
         -Detail "Coverage/provenance gate rejected the final output; inspect the finalizer log."
     exit $pipelineExitCode
@@ -101,6 +157,5 @@ if ($pipelineExitCode -ne 0) {
 
 Write-FinalizerState `
     -Status "COMPLETE" `
-    -ResumePass $pass `
-    -Detail "Complete scanner matrix passed and full-pipeline-summary.json was written."
-
+    -ResumePass $resumeInvocation `
+    -Detail "Complete Semgrep matrix passed and full-pipeline-summary.json was written."

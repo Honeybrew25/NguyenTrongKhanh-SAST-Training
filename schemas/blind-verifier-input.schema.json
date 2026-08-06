@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/blind-verifier-input.schema.json",
+  "title": "Label-blind normalized scanner finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "repo_url",
+    "commit",
+    "scanner",
+    "rule",
+    "message",
+    "location",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "finding_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "member_finding_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 512,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    },
+    "repo_url": {"type": "string", "pattern": "^https://github\\.com/"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "scanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"enum": ["semgrep", "opengrep", "codeql", "other"]},
+        "version": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "ruleset_commit"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "ruleset_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "cwe": {"type": "array", "maxItems": 128, "items": {"type": "string", "maxLength": 128}, "uniqueItems": true},
+        "category": {"type": ["string", "null"], "maxLength": 1024},
+        "severity": {"type": ["string", "null"], "maxLength": 128}
+      }
+    },
+    "message": {"type": "string", "maxLength": 1000000},
+    "location": {"$ref": "#/$defs/location"},
+    "dataflow_trace": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {"$ref": "#/$defs/traceNode"},
+      "default": []
+    },
+    "snippet": {"type": ["string", "null"], "maxLength": 1000000},
+    "fingerprint": {"type": ["string", "null"], "maxLength": 2048},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_result_ref"],
+      "properties": {
+        "raw_result_ref": {"type": "string", "minLength": 1, "maxLength": 8192},
+        "scan_id": {"type": "string", "maxLength": 1024},
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 8192}
+        },
+        "observed_by": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scanner", "rule_id"],
+            "properties": {
+              "scanner": {"type": "string", "minLength": 1, "maxLength": 128},
+              "rule_id": {"type": "string", "minLength": 1, "maxLength": 2048}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "start_line", "end_line"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "start_col": {"type": ["integer", "null"], "minimum": 1},
+        "end_col": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "traceNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "description"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "line": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*$"}
+          ]
+        },
+        "description": {"type": "string", "maxLength": 1000000},
+        "code": {"type": ["string", "null"], "maxLength": 1000000}
+      }
+    }
+  }
+}

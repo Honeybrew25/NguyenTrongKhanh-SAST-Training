@@ -251,7 +251,14 @@ def _pipeline_fixture(tmp_path: Path) -> tuple[dict, dict[str, Path]]:
     )
 
 
-def _job(scan_root: Path, scanner: str, status: str = "SUCCESS") -> None:
+def _job(
+    scan_root: Path,
+    scanner: str,
+    status: str = "SUCCESS",
+    *,
+    pointer_schema_version: int = 1,
+    scheduling: dict | None = None,
+) -> None:
     scanner_root = scan_root / "example__project" / COMMIT / scanner
     attempt = {
         "schema_version": 1,
@@ -262,7 +269,7 @@ def _job(scan_root: Path, scanner: str, status: str = "SUCCESS") -> None:
         "status": status,
     }
     pointer = {
-        "schema_version": 1,
+        "schema_version": pointer_schema_version,
         "scan_id": scan_root.name,
         "repo_url": REPO,
         "commit": COMMIT,
@@ -270,8 +277,52 @@ def _job(scan_root: Path, scanner: str, status: str = "SUCCESS") -> None:
         "status": status,
         "attempt_status": "attempts/0001/status.json",
     }
+    if scheduling is not None:
+        pointer["scheduling"] = scheduling
     _write_json(scanner_root / "attempts" / "0001" / "status.json", attempt)
     _write_json(scanner_root / "status.json", pointer)
+
+
+def _timeout_attempts(scan_root: Path, scanner: str, count: int) -> None:
+    scanner_root = scan_root / "example__project" / COMMIT / scanner
+    for number in range(2, count + 2):
+        _write_json(
+            scanner_root / "attempts" / f"{number:04d}" / "status.json",
+            {
+                "schema_version": 1,
+                "scan_id": scan_root.name,
+                "attempt": number,
+                "repo_url": REPO,
+                "commit": COMMIT,
+                "scanner": {"name": scanner},
+                "status": "TIMEOUT",
+            },
+        )
+
+
+def _write_retry_policy(scan_root: Path) -> str:
+    policy_path = scan_root / "retry-policy.json"
+    _write_json(
+        policy_path,
+        {
+            "schema_version": 1,
+            "scan_id": scan_root.name,
+            "policy": "bounded-timeout-retry",
+            "max_completed_timeout_attempts": 2,
+        },
+    )
+    return _sha256(policy_path)
+
+
+def _quarantine_scheduling(policy_sha256: str) -> dict:
+    return {
+        "state": "QUARANTINED",
+        "reason": "timeout_budget_exhausted",
+        "matching_timeout_attempts": 2,
+        "limit": 2,
+        "policy_sha256": policy_sha256,
+        "decided_at": "2026-08-05T02:30:00+00:00",
+    }
 
 
 def test_discovers_attempts_and_requires_complete_scanner_matrix(tmp_path: Path) -> None:
@@ -318,6 +369,169 @@ def test_running_and_missing_jobs_keep_coverage_incomplete(tmp_path: Path) -> No
     ]
 
 
+def test_mixed_pointer_schemas_surface_quarantine_as_coverage_blocker(
+    tmp_path: Path,
+) -> None:
+    scan_root = tmp_path / "full-scan"
+    _job(scan_root, "semgrep")
+    scheduling = _quarantine_scheduling(_write_retry_policy(scan_root))
+    _job(
+        scan_root,
+        "opengrep",
+        status="TIMEOUT",
+        pointer_schema_version=2,
+        scheduling=scheduling,
+    )
+    _timeout_attempts(scan_root, "opengrep", 1)
+
+    jobs = discover_scan_jobs(scan_root)
+    by_scanner = {job["scanner"]: job for job in jobs}
+
+    assert by_scanner["semgrep"]["pointer_schema_version"] == 1
+    assert by_scanner["semgrep"]["scheduling"] is None
+    assert by_scanner["opengrep"]["pointer_schema_version"] == 2
+    assert by_scanner["opengrep"]["scheduling"] == scheduling
+    assert by_scanner["opengrep"]["scheduling_state"] == "QUARANTINED"
+    assert (
+        by_scanner["opengrep"]["scheduling_reason"]
+        == "timeout_budget_exhausted"
+    )
+
+    coverage = validate_scan_coverage(
+        jobs,
+        {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
+    )
+
+    assert coverage["status_counts"] == {"SUCCESS": 1, "TIMEOUT": 1}
+    assert coverage["blocking_statuses"] == {"QUARANTINED_TIMEOUT": 1}
+    assert coverage["complete"] is False
+    assert coverage["invalid_status_jobs"] == [
+        {
+            "repo_url": REPO,
+            "commit": COMMIT,
+            "scanner": "opengrep",
+            "status": "TIMEOUT",
+            "error_type": None,
+            "scheduling_state": "QUARANTINED",
+            "scheduling_reason": "timeout_budget_exhausted",
+            "blocking_status": "QUARANTINED_TIMEOUT",
+        }
+    ]
+
+
+def test_quarantined_orphan_preserves_interrupted_latest_attempt(
+    tmp_path: Path,
+) -> None:
+    scan_root = tmp_path / "full-scan"
+    scanner_root = scan_root / "example__project" / COMMIT / "opengrep"
+    policy_sha256 = _write_retry_policy(scan_root)
+    for number in (1, 2):
+        _write_json(
+            scanner_root / "attempts" / f"{number:04d}" / "status.json",
+            {
+                "schema_version": 1,
+                "scan_id": scan_root.name,
+                "attempt": number,
+                "repo_url": REPO,
+                "commit": COMMIT,
+                "scanner": {"name": "opengrep"},
+                "status": "TIMEOUT",
+            },
+        )
+    interrupted = {
+        "schema_version": 1,
+        "scan_id": scan_root.name,
+        "attempt": 3,
+        "repo_url": REPO,
+        "commit": COMMIT,
+        "scanner": {"name": "opengrep"},
+        "status": "INTERRUPTED",
+        "error": {"type": "OrphanedAttempt"},
+    }
+    _write_json(scanner_root / "attempts" / "0003" / "status.json", interrupted)
+    _write_json(
+        scanner_root / "status.json",
+        {
+            "schema_version": 2,
+            "scan_id": scan_root.name,
+            "repo_url": REPO,
+            "commit": COMMIT,
+            "scanner": "opengrep",
+            "latest_attempt": 3,
+            "status": "INTERRUPTED",
+            "attempt_status": "attempts/0003/status.json",
+            "scheduling": _quarantine_scheduling(policy_sha256),
+        },
+    )
+
+    jobs = discover_scan_jobs(scan_root)
+    assert jobs[0]["status"] == "INTERRUPTED"
+    coverage = validate_scan_coverage(
+        jobs,
+        {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
+        scanners=["opengrep"],
+    )
+    assert coverage["blocking_statuses"] == {"QUARANTINED_TIMEOUT": 1}
+    assert coverage["complete"] is False
+
+
+@pytest.mark.parametrize("sidecar_exists", [False, True])
+def test_quarantine_requires_matching_retry_policy_sidecar(
+    tmp_path: Path, sidecar_exists: bool
+) -> None:
+    scan_root = tmp_path / "full-scan"
+    if sidecar_exists:
+        _write_retry_policy(scan_root)
+    _job(
+        scan_root,
+        "opengrep",
+        status="TIMEOUT",
+        pointer_schema_version=2,
+        scheduling=_quarantine_scheduling("0" * 64),
+    )
+    _timeout_attempts(scan_root, "opengrep", 1)
+
+    message = "SHA-256 mismatch" if sidecar_exists else "does not exist"
+    with pytest.raises(ValueError, match=message):
+        discover_scan_jobs(scan_root)
+
+
+def test_pointer_schema_v2_rejects_invalid_quarantine_scheduling(
+    tmp_path: Path,
+) -> None:
+    scan_root = tmp_path / "full-scan"
+    scheduling = _quarantine_scheduling(_write_retry_policy(scan_root))
+    scheduling["matching_timeout_attempts"] = 1
+    _job(
+        scan_root,
+        "opengrep",
+        status="TIMEOUT",
+        pointer_schema_version=2,
+        scheduling=scheduling,
+    )
+
+    with pytest.raises(ValueError, match="greater than or equal"):
+        discover_scan_jobs(scan_root)
+
+
+def test_quarantine_limit_must_match_retry_policy_sidecar(tmp_path: Path) -> None:
+    scan_root = tmp_path / "full-scan"
+    policy_sha256 = _write_retry_policy(scan_root)
+    scheduling = _quarantine_scheduling(policy_sha256)
+    scheduling["limit"] = 1
+    _job(
+        scan_root,
+        "opengrep",
+        status="TIMEOUT",
+        pointer_schema_version=2,
+        scheduling=scheduling,
+    )
+    _timeout_attempts(scan_root, "opengrep", 1)
+
+    with pytest.raises(ValueError, match="does not match retry policy sidecar"):
+        discover_scan_jobs(scan_root)
+
+
 @pytest.mark.parametrize(
     ("snapshot", "message"),
     [
@@ -355,6 +569,7 @@ def test_attempt_pointer_cannot_escape_scanner_directory(tmp_path: Path) -> None
     _write_json(
         pointer,
         {
+            "schema_version": 1,
             "attempt_status": "../../../../../outside.json",
             "scan_id": scan_root.name,
             "repo_url": REPO,

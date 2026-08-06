@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -17,6 +18,17 @@ from .scanner import SUPPORTED_SCANNERS
 
 
 _FROZEN_INPUT_NAMES = ("manifest", "scanner_lock", "scan_profile")
+_POINTER_SCHEMA_VERSIONS = (1, 2)
+_QUARANTINE_SCHEDULING_FIELDS = frozenset(
+    {
+        "state",
+        "reason",
+        "matching_timeout_attempts",
+        "limit",
+        "policy_sha256",
+        "decided_at",
+    }
+)
 
 
 def _read_object(path: Path, label: str) -> dict[str, Any]:
@@ -79,6 +91,149 @@ def _contained_path(parent: Path, relative: str, label: str) -> Path:
     return candidate
 
 
+def _required_iso_datetime(value: Any, label: str) -> str:
+    text = _required_string(value, label)
+    normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO-8601 datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} must include a timezone offset")
+    return text
+
+
+def _validated_pointer_scheduling(
+    pointer: dict[str, Any], pointer_path: Path, scan_root: Path
+) -> tuple[int, dict[str, Any] | None]:
+    schema_version = pointer.get("schema_version")
+    if type(schema_version) is not int or schema_version not in _POINTER_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"scanner status pointer.schema_version must be one of "
+            f"{list(_POINTER_SCHEMA_VERSIONS)}: {pointer_path}"
+        )
+
+    if schema_version == 1:
+        if "scheduling" in pointer:
+            raise ValueError(
+                f"scanner status pointer schema v1 must not contain scheduling: "
+                f"{pointer_path}"
+            )
+        return schema_version, None
+
+    scheduling = pointer.get("scheduling")
+    if not isinstance(scheduling, dict):
+        raise ValueError(
+            f"scanner status pointer schema v2 scheduling must be an object: "
+            f"{pointer_path}"
+        )
+    scheduling_fields = set(scheduling)
+    if scheduling_fields != _QUARANTINE_SCHEDULING_FIELDS:
+        missing = sorted(_QUARANTINE_SCHEDULING_FIELDS - scheduling_fields)
+        unexpected = sorted(scheduling_fields - _QUARANTINE_SCHEDULING_FIELDS)
+        raise ValueError(
+            f"scanner status pointer scheduling fields are invalid: {pointer_path}: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    if scheduling.get("state") != "QUARANTINED":
+        raise ValueError(
+            f"scanner status pointer scheduling.state must be 'QUARANTINED': "
+            f"{pointer_path}"
+        )
+    if scheduling.get("reason") != "timeout_budget_exhausted":
+        raise ValueError(
+            "scanner status pointer scheduling.reason must be "
+            f"'timeout_budget_exhausted': {pointer_path}"
+        )
+    if pointer.get("status") not in {"TIMEOUT", "INTERRUPTED", "FAILED"}:
+        raise ValueError(
+            "quarantined scanner status pointer must preserve a blocking attempt "
+            f"status (TIMEOUT, INTERRUPTED, or FAILED): "
+            f"{pointer_path}"
+        )
+
+    matching_timeout_attempts = scheduling.get("matching_timeout_attempts")
+    limit = scheduling.get("limit")
+    if type(matching_timeout_attempts) is not int or matching_timeout_attempts < 1:
+        raise ValueError(
+            "scanner status pointer scheduling.matching_timeout_attempts must be "
+            f"a positive integer: {pointer_path}"
+        )
+    if type(limit) is not int or limit < 1:
+        raise ValueError(
+            f"scanner status pointer scheduling.limit must be a positive integer: "
+            f"{pointer_path}"
+        )
+    if matching_timeout_attempts < limit:
+        raise ValueError(
+            "scanner status pointer scheduling.matching_timeout_attempts must be "
+            f"greater than or equal to scheduling.limit: {pointer_path}"
+        )
+    observed_timeout_attempts = 0
+    for attempt_status_path in sorted(
+        pointer_path.parent.glob("attempts/*/status.json")
+    ):
+        attempt_status = _read_object(attempt_status_path, "attempt status")
+        if attempt_status.get("status") == "TIMEOUT":
+            observed_timeout_attempts += 1
+    if observed_timeout_attempts != matching_timeout_attempts:
+        raise ValueError(
+            "scanner status pointer scheduling.matching_timeout_attempts does not "
+            f"match immutable TIMEOUT attempts: {pointer_path}: "
+            f"{matching_timeout_attempts} != {observed_timeout_attempts}"
+        )
+
+    policy_sha256_value = scheduling.get("policy_sha256")
+    policy_sha256 = _required_sha256(
+        policy_sha256_value,
+        "scanner status pointer scheduling.policy_sha256",
+    )
+    if policy_sha256_value != policy_sha256:
+        raise ValueError(
+            "scanner status pointer scheduling.policy_sha256 must use lowercase "
+            f"hexadecimal: {pointer_path}"
+        )
+    _required_iso_datetime(
+        scheduling.get("decided_at"),
+        "scanner status pointer scheduling.decided_at",
+    )
+
+    policy_path = scan_root / "retry-policy.json"
+    policy = _read_object(policy_path, "retry policy sidecar")
+    if policy.get("schema_version") != 1:
+        raise ValueError(
+            f"retry policy sidecar.schema_version must be 1: {policy_path}"
+        )
+    if policy.get("scan_id") != scan_root.name:
+        raise ValueError(
+            f"retry policy sidecar scan_id does not match scan root: {policy_path}: "
+            f"{policy.get('scan_id')!r} != {scan_root.name!r}"
+        )
+    if policy.get("policy") != "bounded-timeout-retry":
+        raise ValueError(
+            f"retry policy sidecar.policy must be 'bounded-timeout-retry': "
+            f"{policy_path}"
+        )
+    policy_timeout_limit = policy.get("max_completed_timeout_attempts")
+    if type(policy_timeout_limit) is not int or policy_timeout_limit < 1:
+        raise ValueError(
+            "retry policy sidecar.max_completed_timeout_attempts must be a "
+            f"positive integer: {policy_path}"
+        )
+    if limit != policy_timeout_limit:
+        raise ValueError(
+            "scanner status pointer scheduling.limit does not match retry policy "
+            f"sidecar: {pointer_path}: {limit} != {policy_timeout_limit}"
+        )
+    observed_policy_sha256 = _sha256_file(policy_path)
+    if observed_policy_sha256 != policy_sha256:
+        raise ValueError(
+            f"retry policy sidecar SHA-256 mismatch: {policy_path}: "
+            f"{observed_policy_sha256!r} != {policy_sha256!r}"
+        )
+    return schema_version, dict(scheduling)
+
+
 def discover_scan_jobs(scan_root: Path) -> list[dict[str, Any]]:
     """Resolve each scanner pointer to its latest immutable attempt status."""
 
@@ -89,6 +244,9 @@ def discover_scan_jobs(scan_root: Path) -> list[dict[str, Any]]:
     seen: set[tuple[str, str, str]] = set()
     for pointer_path in sorted(root.glob("*/*/*/status.json")):
         pointer = _read_object(pointer_path, "scanner status pointer")
+        pointer_schema_version, scheduling = _validated_pointer_scheduling(
+            pointer, pointer_path, root
+        )
         scanner_directory = pointer_path.parent
         attempt_status_path = _contained_path(
             scanner_directory,
@@ -126,6 +284,14 @@ def discover_scan_jobs(scan_root: Path) -> list[dict[str, Any]]:
             {
                 **expected_pointer,
                 "pointer_path": pointer_path,
+                "pointer_schema_version": pointer_schema_version,
+                "scheduling": scheduling,
+                "scheduling_state": (
+                    scheduling.get("state") if scheduling is not None else None
+                ),
+                "scheduling_reason": (
+                    scheduling.get("reason") if scheduling is not None else None
+                ),
                 "attempt_status_path": attempt_status_path,
                 "attempt": attempt,
             }
@@ -175,17 +341,28 @@ def validate_scan_coverage(
             and error.get("type") == "NoApplicableRuleConfig"
         )
         if status != "SUCCESS" and not valid_skip:
-            invalid_status_jobs.append(
-                {
-                    "repo_url": row["repo_url"],
-                    "commit": row["commit"],
-                    "scanner": row["scanner"],
-                    "status": status,
-                    "error_type": error.get("type") if isinstance(error, dict) else None,
-                }
-            )
+            invalid_job = {
+                "repo_url": row["repo_url"],
+                "commit": row["commit"],
+                "scanner": row["scanner"],
+                "status": status,
+                "error_type": error.get("type") if isinstance(error, dict) else None,
+            }
+            scheduling_state = row.get("scheduling_state")
+            scheduling_reason = row.get("scheduling_reason")
+            if scheduling_state is not None:
+                invalid_job["scheduling_state"] = scheduling_state
+                invalid_job["scheduling_reason"] = scheduling_reason
+            if scheduling_state == "QUARANTINED":
+                invalid_job["blocking_status"] = "QUARANTINED_TIMEOUT"
+            invalid_status_jobs.append(invalid_job)
     blocking = dict(
-        sorted(Counter(str(row["status"]) for row in invalid_status_jobs).items())
+        sorted(
+            Counter(
+                str(row.get("blocking_status", row["status"]))
+                for row in invalid_status_jobs
+            ).items()
+        )
     )
     return {
         "snapshots_expected": len(snapshots),

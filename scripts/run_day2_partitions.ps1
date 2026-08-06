@@ -82,7 +82,8 @@ $common = @(
     "--manifest", $manifestRelative,
     "--scan-id", $ScanId,
     "--job-timeout-seconds", "$JobTimeoutSeconds",
-    "--prefetch"
+    "--prefetch",
+    "--scanner", "semgrep"
 )
 
 $argsA = @($common + @("--repo-url", $openclawUrl))

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_on": "2026-07-30",
+  "generated_on": "2026-08-05",
   "benchmark": {
     "name": "Tencent/VulnGym",
     "tag": "v0.1.4",
@@ -10,26 +10,74 @@
     "name": "semgrep/semgrep-rules",
     "commit": "40b8c63f75dc7c22c8a77482d73bfb864b146f7e",
     "path": "rules/semgrep-rules",
-    "policy": "The same vendored Semgrep-compatible rules are used by both engines so engine effects can be separated from rule effects."
+    "policy": "Pinned rule corpus for the active Semgrep baseline. CodeQL remains a separate baseline with its own pinned query packs."
   },
   "scanners": {
     "semgrep": {
+      "enabled": true,
       "version": "1.171.0",
       "local_verified": true,
       "local_executable_sha256": "f2367cb9b0f9a83c76af15588c6a333014611c641821c257bf15305139ed8641",
       "docker_image": "semgrep/semgrep:1.171.0"
     },
     "opengrep": {
+      "enabled": false,
+      "status": "retired_from_active_workflow_2026-08-05",
       "version": "1.26.0",
-      "local_verified": true,
+      "local_verified": false,
       "windows_asset": "https://github.com/opengrep/opengrep/releases/download/v1.26.0/opengrep_windows_x86.exe",
       "windows_asset_sha256": "4e6c0e201982cd72ca4aff5798a2ff133e17de8af3b00b460238fdda4dd266e3",
-      "local_path": "cache/tools/opengrep/1.26.0/opengrep.exe"
+      "retired_path": "cache/retired/opengrep-20260805/tool-cache/opengrep/1.26.0/opengrep.exe"
     },
     "codeql": {
-      "enabled": false,
-      "status": "not_installed",
-      "policy": "Conditional escalation baseline only. Pin the CLI bundle and query pack before enabling; do not mix its metrics with the shared-rule Semgrep/OpenGrep comparison."
+      "enabled": true,
+      "status": "wsl_linux_primary_windows_retained_for_audit",
+      "version": "2.25.5",
+      "bundle_url": "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.25.5/codeql-bundle-win64.tar.gz",
+      "bundle_sha256": "6bef9bd2e61a7b3bca91c19637e5607a5fc887b2cf8b73e7c202516f4df773e1",
+      "local_path": "cache/tools/codeql/2.25.5/codeql/codeql.exe",
+      "local_executable_sha256": "cec30845ce9fb0c833c23cc149fe6c9d93af09d466ad20eb60b4b8184844dbdf",
+      "wsl_linux": {
+        "profile": "config/codeql-profile-wsl.json",
+        "bundle_path": "${HOME}/.local/share/codeql/2.25.5-linux64/codeql/codeql",
+        "local_executable_sha256": "5e459057abea0f2401d8f3a0eb7b4026571b17b8b5bb051ee66496386282dd27",
+        "node_runtime": {
+          "version": "22.16.0",
+          "local_executable_sha256": "8142d37c6f2f372ef040419e7a111a6baf17df89f8078d02447d6c639ae20c1d"
+        },
+        "python_runtime": {
+          "version": "3.11.15",
+          "local_executable_sha256": "6759dcc6aa5a3fe3377349092f92f6700f1f79017294c1d0085009eb8802cb1e"
+        },
+        "go_runtime": {
+          "version": "1.24.1",
+          "archive_sha256": "cb2396bae64183cdccf81a9a6df0aea3bce9511fc21469fb89a0c00470088073",
+          "local_executable_sha256": "f6e39435e78f3320d4cc14fccf895ddc9dbf355b2d2b5786c83d7be46bcccea6"
+        },
+        "source_and_database_filesystem": "wsl-ext4",
+        "artifact_filesystem": "repo-ntfs"
+      },
+      "query_suite": "security-extended",
+      "query_source": {
+        "repository": "https://github.com/github/codeql",
+        "tag": "codeql-cli/v2.25.5",
+        "commit": "b551e89ea8e011c0e3301fd0ce05589c9f2d3681"
+      },
+      "query_packs": {
+        "actions": "codeql/actions-queries@0.6.28",
+        "go": "codeql/go-queries@1.6.3",
+        "javascript-typescript": "codeql/javascript-queries@2.3.10",
+        "python": "codeql/python-queries@1.8.3"
+      },
+      "python_runtime": "Python 3.11.9 from .venv, selected with CODEQL_EXTRACTOR_PYTHON_OPTION_PYTHON_EXECUTABLE_NAME",
+      "go_runtime": {
+        "version": "1.24.1",
+        "archive_url": "https://go.dev/dl/go1.24.1.windows-amd64.zip",
+        "archive_sha256": "95666b551453209a2b8869d29d177285ff9573af10f085d961d7ae5440f645ce",
+        "local_path": "cache/tools/go/1.24.1/go/bin/go.exe",
+        "local_executable_sha256": "fb4031767a39a83380e7aa1beda423565d27c5850b036177a586fca5f3d1bc50"
+      },
+      "policy": "Separate escalation baseline. Query downloads are disabled and results must not be mixed with the Semgrep baseline."
     }
   }
 }

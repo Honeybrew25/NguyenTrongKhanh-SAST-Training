@@ -31,6 +31,12 @@ Mỗi bản ghi đã được thẩm định phải bao gồm:
 6. Đối với `FP_CONFIRMED`, ít nhất một mã lý do.
 7. Đối với `TP_KNOWN`, ID mục/báo cáo VulnGym được liên kết trong phần siêu dữ liệu chỉ chứa nhãn và được ẩn khỏi bộ xác minh.
 
+Nhãn chính thức phải tuân theo `schemas/human-gold-label.schema.json`. Lệnh
+`vulngym-evaluate classify` mặc định kiểm tra đủ nhãn, reviewer loại `HUMAN`,
+timestamp có múi giờ, evidence, reason code và liên kết VulnGym bắt buộc. Cờ
+`--allow-incomplete-gold` chỉ dành cho fixture hoặc phân tích phát triển, không
+được dùng để tạo metric báo cáo.
+
 ## Mã lý do cho kết quả dương tính giả
 
 - `UNREACHABLE_CODE`

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/verifier-prediction.schema.json",
+  "title": "Frozen blind-verifier prediction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "verdict",
+    "confidence",
+    "reason_codes",
+    "attacker_capability",
+    "entry_point",
+    "security_effect",
+    "controls",
+    "reasoning",
+    "evidence",
+    "abstain_reason",
+    "evaluation_eligible",
+    "agent"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "finding_id": {"type": "string", "minLength": 1},
+    "verdict": {"enum": ["TRUE_POSITIVE", "FALSE_POSITIVE", "ABSTAIN"]},
+    "confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string"}
+    },
+    "attacker_capability": {"type": "string", "minLength": 1},
+    "entry_point": {"type": "string", "minLength": 1},
+    "security_effect": {"type": "string", "minLength": 1},
+    "controls": {"type": "string", "minLength": 1},
+    "reasoning": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/traceNode"}
+    },
+    "abstain_reason": {
+      "type": ["string", "null"]
+    },
+    "evaluation_eligible": {"type": "boolean"},
+    "exclusion_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "provider", "provider_version", "model", "steps", "controller_tool_calls"],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "provider_version": {"type": "string", "minLength": 1},
+        "model": {"type": ["string", "null"]},
+        "steps": {"type": "integer", "minimum": 1},
+        "controller_tool_calls": {"type": "integer", "minimum": 0}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"evaluation_eligible": {"const": false}},
+        "required": ["evaluation_eligible"]
+      },
+      "then": {"required": ["exclusion_reason"]}
+    }
+  ],
+  "$defs": {
+    "traceNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "description", "code"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "line": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*$"}
+          ]
+        },
+        "description": {"type": "string", "minLength": 1},
+        "code": {"type": "string"}
+      }
+    }
+  }
+}

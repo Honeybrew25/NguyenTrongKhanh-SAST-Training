@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/verifier-agent-response.schema.json",
+  "title": "Isolated verifier model response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "working_hypothesis",
+    "tool_requests",
+    "verdict",
+    "confidence",
+    "reason_codes",
+    "attacker_capability",
+    "entry_point",
+    "security_effect",
+    "controls",
+    "reasoning",
+    "evidence",
+    "abstain_reason"
+  ],
+  "properties": {
+    "action": {"enum": ["REQUEST_TOOLS", "FINAL"]},
+    "working_hypothesis": {"type": "string", "maxLength": 8000},
+    "tool_requests": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "path", "query", "start_line", "end_line", "case_sensitive"],
+        "properties": {
+          "tool": {"enum": ["read_file", "search_code", "list_directory"]},
+          "path": {"type": ["string", "null"], "maxLength": 4096},
+          "query": {"type": ["string", "null"], "maxLength": 200},
+          "start_line": {"type": ["integer", "null"], "minimum": 1},
+          "end_line": {"type": ["integer", "null"], "minimum": 1},
+          "case_sensitive": {"type": ["boolean", "null"]}
+        }
+      }
+    },
+    "verdict": {"type": ["string", "null"], "enum": ["TRUE_POSITIVE", "FALSE_POSITIVE", "ABSTAIN", null]},
+    "confidence": {"type": ["string", "null"], "enum": ["HIGH", "MEDIUM", "LOW", null]},
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "UNREACHABLE_CODE",
+          "NO_ATTACKER_CONTROL",
+          "SANITIZED_BEFORE_SINK",
+          "CONSTANT_VALUE",
+          "AUTHZ_PRECONDITION_BLOCKS_ATTACK",
+          "SAFE_API_USAGE",
+          "TYPE_OR_SCHEMA_CONSTRAINT",
+          "TEST_OR_FIXTURE_ONLY",
+          "DEAD_OR_UNUSED_PATH",
+          "FRAMEWORK_GUARANTEE",
+          "SCANNER_MODELING_ERROR",
+          "OTHER_EXPLAINED"
+        ]
+      }
+    },
+    "attacker_capability": {"type": ["string", "null"], "maxLength": 8000},
+    "entry_point": {"type": ["string", "null"], "maxLength": 8000},
+    "security_effect": {"type": ["string", "null"], "maxLength": 8000},
+    "controls": {"type": ["string", "null"], "maxLength": 8000},
+    "reasoning": {"type": ["string", "null"], "maxLength": 16000},
+    "evidence": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "start_line", "end_line", "description"],
+        "properties": {
+          "file": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "start_line": {"type": "integer", "minimum": 1},
+          "end_line": {"type": "integer", "minimum": 1},
+          "description": {"type": "string", "minLength": 1, "maxLength": 8000}
+        }
+      }
+    },
+    "abstain_reason": {
+      "type": ["string", "null"],
+      "enum": [
+        "INSUFFICIENT_CONTEXT",
+        "MISSING_EXTERNAL_IMPLEMENTATION",
+        "AMBIGUOUS_ATTACKER_CONTROL",
+        "AMBIGUOUS_REACHABILITY",
+        "CONFLICTING_EVIDENCE",
+        "OTHER_EXPLAINED",
+        null
+      ]
+    }
+  }
+}

@@ -354,3 +354,46 @@ def test_classification_coverage_includes_missing_and_abstained_predictions() ->
         ],
     )
     assert all_wrong["metrics_decided_only"]["f1"] == 0.0
+
+
+def test_classification_metrics_excludes_ineligible_predictions() -> None:
+    report = classification_metrics(
+        [
+            {"finding_id": "eligible", "label": "TP_KNOWN"},
+            {"finding_id": "contaminated", "label": "UNCERTAIN"},
+        ],
+        [
+            {"finding_id": "eligible", "verdict": "TRUE_POSITIVE"},
+            {
+                "finding_id": "contaminated",
+                "verdict": "TRUE_POSITIVE",
+                "evaluation_eligible": False,
+            },
+        ],
+    )
+
+    assert report["excluded_predictions"] == ["contaminated"]
+    assert report["extra_predictions"] == []
+    assert report["coverage"]["labeled_total"] == 1
+
+
+def test_classification_metrics_does_not_count_ineligible_gold_as_missing() -> None:
+    report = classification_metrics(
+        [
+            {"finding_id": "official", "label": "TP_KNOWN"},
+            {"finding_id": "development", "label": "FP_CONFIRMED"},
+        ],
+        [
+            {"finding_id": "official", "verdict": "TRUE_POSITIVE"},
+            {
+                "finding_id": "development",
+                "verdict": "ABSTAIN",
+                "evaluation_eligible": False,
+            },
+        ],
+    )
+
+    assert report["excluded_predictions"] == ["development"]
+    assert report["excluded_labeled_cases"] == ["development"]
+    assert report["coverage"]["labeled_total"] == 1
+    assert report["coverage"]["missing"] == 0

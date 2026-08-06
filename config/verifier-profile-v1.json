@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "profile_id": "blind-source-review-v1",
+  "threat_model": "A true positive requires a concrete attacker capability, a reachable input or artifact, a security-relevant effect, and no effective validation, sanitization, authentication, authorization, type constraint, or framework guarantee that blocks exploitation. A dangerous API or suspicious syntax alone is insufficient. Failure to establish exploitability is not proof of a false positive; use ABSTAIN when evidence remains insufficient.",
+  "limits": {
+    "max_steps": 5,
+    "max_tool_calls_per_step": 4,
+    "max_context_chars": 80000,
+    "max_read_lines": 180,
+    "max_source_file_bytes": 2000000,
+    "max_search_results": 40,
+    "max_directory_entries": 100,
+    "initial_context_radius": 16,
+    "trace_context_radius": 5,
+    "max_initial_trace_nodes": 12,
+    "max_evidence_lines": 25,
+    "search_timeout_seconds": 15,
+    "provider_timeout_seconds": 900,
+    "max_input_bytes": 268435456,
+    "max_input_line_bytes": 8388608,
+    "max_input_records": 10000,
+    "max_input_depth": 16,
+    "max_input_container_items": 100000,
+    "max_input_string_chars": 1000000,
+    "max_trace_nodes": 512,
+    "max_search_output_bytes": 2097152,
+    "max_provider_event_bytes": 16777216,
+    "max_provider_response_bytes": 1048576
+  }
+}

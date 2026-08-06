@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import hashlib
 import json
 import os
 import re
@@ -17,6 +16,14 @@ from urllib.parse import urlparse
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _GIT_TIMEOUT_SECONDS = 10_800
 _CLONE_ATTEMPTS = 3
+
+
+class InterprocessLockTimeout(TimeoutError):
+    """Raised only when an interprocess lock cannot be acquired in time."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(f"timed out waiting for interprocess lock: {path}")
 
 
 @contextmanager
@@ -45,7 +52,7 @@ def interprocess_lock(path: Path, timeout_seconds: int = _GIT_TIMEOUT_SECONDS):
                 acquired = True
             except OSError as exc:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"timed out waiting for interprocess lock: {path}") from exc
+                    raise InterprocessLockTimeout(path) from exc
                 time.sleep(0.1)
         yield
     finally:
