@@ -462,7 +462,7 @@ def validate_blind_record(
     _require_allowed_keys(record["location"], "location", "location")
     _require_allowed_keys(record["provenance"], "provenance", "provenance")
     scanner = record["scanner"]
-    if scanner.get("name") not in {"semgrep", "opengrep", "codeql", "other"}:
+    if scanner.get("name") not in {"semgrep", "other"}:
         raise BlindInputError("scanner.name is invalid")
     if not isinstance(scanner.get("version"), str) or not scanner["version"]:
         raise BlindInputError("scanner.version must be a non-empty string")
@@ -1477,7 +1477,33 @@ def _validate_final_response(
         raise PredictionError(f"{verdict} requires source evidence")
     if len(evidence) > 12 or not all(isinstance(item, dict) for item in evidence):
         raise PredictionError("evidence must contain at most 12 objects")
-    evidence_nodes = [toolbox.evidence_node(item) for item in evidence]
+    normalized_evidence: list[dict[str, Any]] = []
+    for item in evidence:
+        start = item.get("start_line")
+        end = item.get("end_line")
+        if (
+            isinstance(start, int)
+            and isinstance(end, int)
+            and start >= 1
+            and end >= start
+            and end - start + 1 > toolbox.profile.max_evidence_lines
+        ):
+            for chunk_start in range(
+                start, end + 1, toolbox.profile.max_evidence_lines
+            ):
+                chunk = dict(item)
+                chunk["start_line"] = chunk_start
+                chunk["end_line"] = min(
+                    end, chunk_start + toolbox.profile.max_evidence_lines - 1
+                )
+                normalized_evidence.append(chunk)
+        else:
+            normalized_evidence.append(item)
+    if len(normalized_evidence) > 12:
+        raise PredictionError(
+            "evidence exceeds 12 objects after splitting oversized ranges"
+        )
+    evidence_nodes = [toolbox.evidence_node(item) for item in normalized_evidence]
     return {
         "verdict": verdict,
         "confidence": confidence,

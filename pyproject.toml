@@ -18,8 +18,6 @@ dev = [
 [project.scripts]
 vulngym-audit = "vulngym_enrich.audit:main"
 vulngym-checkout = "vulngym_enrich.checkout:main"
-vulngym-codeql = "vulngym_enrich.codeql_runner:main"
-vulngym-codeql-postprocess = "vulngym_enrich.codeql_pipeline:main"
 vulngym-dedup = "vulngym_enrich.dedup:main"
 vulngym-evaluate = "vulngym_enrich.evaluator:main"
 vulngym-full-pipeline = "vulngym_enrich.full_pipeline:main"

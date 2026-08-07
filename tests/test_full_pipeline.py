@@ -72,7 +72,7 @@ def _pipeline_fixture(tmp_path: Path) -> tuple[dict, dict[str, Path]]:
         name: {"path": str(path), "sha256": _sha256(path)}
         for name, path in input_sources.items()
     }
-    executable_hashes = {"semgrep": "c" * 64, "opengrep": "d" * 64}
+    executable_hashes = {"semgrep": "c" * 64}
     _write_json(
         scan_root / "run.json",
         {
@@ -187,7 +187,7 @@ def _pipeline_fixture(tmp_path: Path) -> tuple[dict, dict[str, Path]]:
         "scanner_lock": "scanners.lock.json",
         "scan_profile": "scan-profile.json",
     }
-    for scanner in ("semgrep", "opengrep"):
+    for scanner in ("semgrep",):
         scanner_root = scan_root / "example__project" / COMMIT / scanner
         attempt = scanner_root / "attempts" / "0001"
         _write_json(attempt / "raw.json", raw)
@@ -325,10 +325,10 @@ def _quarantine_scheduling(policy_sha256: str) -> dict:
     }
 
 
-def test_discovers_attempts_and_requires_complete_scanner_matrix(tmp_path: Path) -> None:
+def test_discovers_attempts_and_requires_complete_semgrep_matrix(tmp_path: Path) -> None:
     scan_root = tmp_path / "full-scan"
     _job(scan_root, "semgrep")
-    _job(scan_root, "opengrep")
+    _job(scan_root, "other")
     jobs = discover_scan_jobs(scan_root)
 
     coverage = validate_scan_coverage(
@@ -339,13 +339,13 @@ def test_discovers_attempts_and_requires_complete_scanner_matrix(tmp_path: Path)
     assert len(jobs) == 2
     assert coverage == {
         "snapshots_expected": 1,
-        "scanners_expected": ["semgrep", "opengrep"],
-        "jobs_expected": 2,
-        "jobs_accounted": 2,
-        "status_counts": {"SUCCESS": 2},
+        "scanners_expected": ["semgrep"],
+        "jobs_expected": 1,
+        "jobs_accounted": 1,
+        "status_counts": {"SUCCESS": 1},
         "missing_jobs": [],
         "unexpected_jobs": [],
-        "ignored_nonselected_jobs": 0,
+        "ignored_nonselected_jobs": 1,
         "invalid_status_jobs": [],
         "blocking_statuses": {},
         "complete": True,
@@ -364,36 +364,31 @@ def test_running_and_missing_jobs_keep_coverage_incomplete(tmp_path: Path) -> No
     assert coverage["complete"] is False
     assert coverage["jobs_accounted"] == 1
     assert coverage["blocking_statuses"] == {"RUNNING": 1}
-    assert coverage["missing_jobs"] == [
-        {"repo_url": REPO, "commit": COMMIT, "scanner": "opengrep"}
-    ]
+    assert coverage["missing_jobs"] == []
 
 
 def test_mixed_pointer_schemas_surface_quarantine_as_coverage_blocker(
     tmp_path: Path,
 ) -> None:
     scan_root = tmp_path / "full-scan"
-    _job(scan_root, "semgrep")
     scheduling = _quarantine_scheduling(_write_retry_policy(scan_root))
     _job(
         scan_root,
-        "opengrep",
+        "semgrep",
         status="TIMEOUT",
         pointer_schema_version=2,
         scheduling=scheduling,
     )
-    _timeout_attempts(scan_root, "opengrep", 1)
+    _timeout_attempts(scan_root, "semgrep", 1)
 
     jobs = discover_scan_jobs(scan_root)
     by_scanner = {job["scanner"]: job for job in jobs}
 
-    assert by_scanner["semgrep"]["pointer_schema_version"] == 1
-    assert by_scanner["semgrep"]["scheduling"] is None
-    assert by_scanner["opengrep"]["pointer_schema_version"] == 2
-    assert by_scanner["opengrep"]["scheduling"] == scheduling
-    assert by_scanner["opengrep"]["scheduling_state"] == "QUARANTINED"
+    assert by_scanner["semgrep"]["pointer_schema_version"] == 2
+    assert by_scanner["semgrep"]["scheduling"] == scheduling
+    assert by_scanner["semgrep"]["scheduling_state"] == "QUARANTINED"
     assert (
-        by_scanner["opengrep"]["scheduling_reason"]
+        by_scanner["semgrep"]["scheduling_reason"]
         == "timeout_budget_exhausted"
     )
 
@@ -402,14 +397,14 @@ def test_mixed_pointer_schemas_surface_quarantine_as_coverage_blocker(
         {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
     )
 
-    assert coverage["status_counts"] == {"SUCCESS": 1, "TIMEOUT": 1}
+    assert coverage["status_counts"] == {"TIMEOUT": 1}
     assert coverage["blocking_statuses"] == {"QUARANTINED_TIMEOUT": 1}
     assert coverage["complete"] is False
     assert coverage["invalid_status_jobs"] == [
         {
             "repo_url": REPO,
             "commit": COMMIT,
-            "scanner": "opengrep",
+            "scanner": "semgrep",
             "status": "TIMEOUT",
             "error_type": None,
             "scheduling_state": "QUARANTINED",
@@ -423,7 +418,7 @@ def test_quarantined_orphan_preserves_interrupted_latest_attempt(
     tmp_path: Path,
 ) -> None:
     scan_root = tmp_path / "full-scan"
-    scanner_root = scan_root / "example__project" / COMMIT / "opengrep"
+    scanner_root = scan_root / "example__project" / COMMIT / "semgrep"
     policy_sha256 = _write_retry_policy(scan_root)
     for number in (1, 2):
         _write_json(
@@ -434,7 +429,7 @@ def test_quarantined_orphan_preserves_interrupted_latest_attempt(
                 "attempt": number,
                 "repo_url": REPO,
                 "commit": COMMIT,
-                "scanner": {"name": "opengrep"},
+                "scanner": {"name": "semgrep"},
                 "status": "TIMEOUT",
             },
         )
@@ -444,7 +439,7 @@ def test_quarantined_orphan_preserves_interrupted_latest_attempt(
         "attempt": 3,
         "repo_url": REPO,
         "commit": COMMIT,
-        "scanner": {"name": "opengrep"},
+        "scanner": {"name": "semgrep"},
         "status": "INTERRUPTED",
         "error": {"type": "OrphanedAttempt"},
     }
@@ -456,7 +451,7 @@ def test_quarantined_orphan_preserves_interrupted_latest_attempt(
             "scan_id": scan_root.name,
             "repo_url": REPO,
             "commit": COMMIT,
-            "scanner": "opengrep",
+            "scanner": "semgrep",
             "latest_attempt": 3,
             "status": "INTERRUPTED",
             "attempt_status": "attempts/0003/status.json",
@@ -469,7 +464,7 @@ def test_quarantined_orphan_preserves_interrupted_latest_attempt(
     coverage = validate_scan_coverage(
         jobs,
         {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
-        scanners=["opengrep"],
+        scanners=["semgrep"],
     )
     assert coverage["blocking_statuses"] == {"QUARANTINED_TIMEOUT": 1}
     assert coverage["complete"] is False
@@ -484,12 +479,12 @@ def test_quarantine_requires_matching_retry_policy_sidecar(
         _write_retry_policy(scan_root)
     _job(
         scan_root,
-        "opengrep",
+        "semgrep",
         status="TIMEOUT",
         pointer_schema_version=2,
         scheduling=_quarantine_scheduling("0" * 64),
     )
-    _timeout_attempts(scan_root, "opengrep", 1)
+    _timeout_attempts(scan_root, "semgrep", 1)
 
     message = "SHA-256 mismatch" if sidecar_exists else "does not exist"
     with pytest.raises(ValueError, match=message):
@@ -504,7 +499,7 @@ def test_pointer_schema_v2_rejects_invalid_quarantine_scheduling(
     scheduling["matching_timeout_attempts"] = 1
     _job(
         scan_root,
-        "opengrep",
+        "semgrep",
         status="TIMEOUT",
         pointer_schema_version=2,
         scheduling=scheduling,
@@ -521,12 +516,12 @@ def test_quarantine_limit_must_match_retry_policy_sidecar(tmp_path: Path) -> Non
     scheduling["limit"] = 1
     _job(
         scan_root,
-        "opengrep",
+        "semgrep",
         status="TIMEOUT",
         pointer_schema_version=2,
         scheduling=scheduling,
     )
-    _timeout_attempts(scan_root, "opengrep", 1)
+    _timeout_attempts(scan_root, "semgrep", 1)
 
     with pytest.raises(ValueError, match="does not match retry policy sidecar"):
         discover_scan_jobs(scan_root)
@@ -548,7 +543,7 @@ def test_manifest_snapshot_identity_is_validated(snapshot: object, message: str)
 def test_nonselected_scanner_is_ignored_and_invalid_skip_is_blocked(tmp_path: Path) -> None:
     scan_root = tmp_path / "full-scan"
     _job(scan_root, "semgrep", status="SKIPPED")
-    _job(scan_root, "opengrep", status="SUCCESS")
+    _job(scan_root, "other", status="SUCCESS")
 
     coverage = validate_scan_coverage(
         discover_scan_jobs(scan_root),
@@ -593,7 +588,7 @@ def test_partial_file_is_unresolved_when_alternate_engine_has_file_error(
             [{"type": ["PartialParsing", []], "path": "src/app.py", "message": "parse"}],
         ),
         (
-            "opengrep",
+            "other",
             [{"type": "Timeout", "path": "src/app.py", "message": "rule timeout"}],
         ),
     ):
@@ -617,7 +612,7 @@ def test_partial_file_is_unresolved_when_alternate_engine_has_file_error(
 
     partial = next(row for row in observations if row["scanner"] == "semgrep")
     assert partial["alternate_engines"] == [
-        {"scanner": "opengrep", "file_status": "FILE_ERROR:Timeout"}
+        {"scanner": "other", "file_status": "FILE_ERROR:Timeout"}
     ]
     assert summary["partial_parsing_engine_files"] == 1
     assert summary["partial_parsing_files"] == 1
@@ -630,10 +625,10 @@ def test_run_full_pipeline_end_to_end_with_frozen_provenance(tmp_path: Path) -> 
     summary = run_full_pipeline(**arguments)
 
     assert summary["coverage"]["complete"] is True
-    assert summary["normalization"]["findings"] == 2
-    assert summary["normalization"]["with_dataflow_trace"] == 2
+    assert summary["normalization"]["findings"] == 1
+    assert summary["normalization"]["with_dataflow_trace"] == 1
     assert summary["deduplication"]["canonical_clusters"] == 1
-    assert summary["deduplication"]["cross_tool_clusters"] == 1
+    assert summary["deduplication"]["cross_tool_clusters"] == 0
     assert summary["matching"]["counts_by_tier"] == {
         "STRICT_SOURCE_SINK": 1,
         "STRONG_SOURCE_SINK": 0,
@@ -660,9 +655,9 @@ def test_run_full_pipeline_end_to_end_with_frozen_provenance(tmp_path: Path) -> 
 
 def test_run_full_pipeline_blocks_heterogeneous_attempt_provenance(tmp_path: Path) -> None:
     arguments, status_paths = _pipeline_fixture(tmp_path)
-    status = json.loads(status_paths["opengrep"].read_text(encoding="utf-8"))
+    status = json.loads(status_paths["semgrep"].read_text(encoding="utf-8"))
     status["inputs"]["scan_profile"]["sha256"] = "e" * 64
-    _write_json(status_paths["opengrep"], status)
+    _write_json(status_paths["semgrep"], status)
 
     with pytest.raises(
         ValueError,

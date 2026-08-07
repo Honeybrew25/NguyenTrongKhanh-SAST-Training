@@ -34,7 +34,7 @@ class NormalizationContext:
             raise ValueError("repo_url must be a public GitHub HTTPS URL")
         if not _SHA40.fullmatch(self.commit):
             raise ValueError("commit must be a lowercase 40-character SHA-1")
-        if self.scanner_name not in {"semgrep", "opengrep", "codeql", "other"}:
+        if self.scanner_name not in {"semgrep", "other"}:
             raise ValueError(f"unsupported scanner name: {self.scanner_name}")
         if not self.scanner_version:
             raise ValueError("scanner_version must not be empty")
@@ -158,7 +158,7 @@ def _encoded_rule_prefix(path: Path) -> str:
 
 def _normalize_rule_id(value: Any, context: NormalizationContext) -> str:
     rule_id = str(value or "").strip()
-    if not rule_id or context.scanner_name not in {"semgrep", "opengrep"}:
+    if not rule_id or context.scanner_name != "semgrep":
         return rule_id
     if context.ruleset_root is None:
         return rule_id
@@ -572,7 +572,7 @@ def finding_statistics(findings: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Normalize Semgrep/OpenGrep JSON or SARIF findings.")
+    parser = argparse.ArgumentParser(description="Normalize Semgrep JSON or SARIF findings.")
     parser.add_argument(
         "--status",
         type=Path,
@@ -587,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo-url")
     parser.add_argument("--commit")
-    parser.add_argument("--scanner", choices=("semgrep", "opengrep", "codeql", "other"))
+    parser.add_argument("--scanner", choices=("semgrep", "other"))
     parser.add_argument("--scanner-version")
     parser.add_argument("--ruleset-commit")
     parser.add_argument("--scan-id")

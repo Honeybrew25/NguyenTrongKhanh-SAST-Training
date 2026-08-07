@@ -55,12 +55,13 @@ if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
     throw "Release manifest is missing: $releasePath"
 }
 $release = Get-Content -LiteralPath $releasePath -Raw | ConvertFrom-Json
+$expectedReleaseId = [IO.Path]::GetFileNameWithoutExtension($releasePath)
 if (
     [int]$release.schema_version -ne 1 -or
-    [string]$release.release_id -ne 'semgrep-verifier-agent-v1' -or
+    [string]$release.release_id -ne $expectedReleaseId -or
     [string]$release.scope.scanner -ne 'semgrep'
 ) {
-    throw 'Release manifest is not the Semgrep verifier agent v1.'
+    throw 'Release manifest identity is invalid.'
 }
 foreach ($identity in @($release.identity.files)) {
     Assert-FileIdentity $identity
@@ -226,7 +227,7 @@ switch ($Action) {
             $codexVersion -ne [string]$release.agent.provider.version -or
             $codexSha256 -ne [string]$release.agent.provider.executable_sha256
         ) {
-            throw 'Codex CLI identity differs from the pinned v1 provider.'
+            throw 'Codex CLI identity differs from the provider pinned by this release.'
         }
         Invoke-Uv $validateArguments
         Invoke-Uv @(

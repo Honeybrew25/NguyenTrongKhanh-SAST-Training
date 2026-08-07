@@ -123,17 +123,17 @@ def test_cross_tool_semantic_grouping_requires_supported_shared_evidence(evidenc
         left_values["category"] = right_values["category"] = "injection"
 
     semgrep = finding("semgrep-result", scanner="semgrep", start_line=30, **left_values)
-    opengrep = finding("opengrep-result", scanner="opengrep", start_line=32, **right_values)
-    output, summary = deduplicate_findings([semgrep, opengrep], line_tolerance=2)
+    other = finding("other-result", scanner="other", start_line=32, **right_values)
+    output, summary = deduplicate_findings([semgrep, other], line_tolerance=2)
 
     rows = by_id(output)
-    assert rows["semgrep-result"]["canonical_finding_id"] == rows["opengrep-result"]["canonical_finding_id"]
+    assert rows["semgrep-result"]["canonical_finding_id"] == rows["other-result"]["canonical_finding_id"]
     expected_observers = [
-        {"scanner": "opengrep", "rule_id": right_values["rule_id"]},
+        {"scanner": "other", "rule_id": right_values["rule_id"]},
         {"scanner": "semgrep", "rule_id": left_values["rule_id"]},
     ]
     assert rows["semgrep-result"]["provenance"]["observed_by"] == expected_observers
-    assert rows["opengrep-result"]["provenance"]["observed_by"] == expected_observers
+    assert rows["other-result"]["provenance"]["observed_by"] == expected_observers
     assert summary["statistics"]["canonical_clusters"] == 1
     assert summary["statistics"]["cross_tool_merges"] == 1
     assert summary["clusters"][0]["cluster_type"] == "CROSS_TOOL_SEMANTIC"
@@ -141,10 +141,10 @@ def test_cross_tool_semantic_grouping_requires_supported_shared_evidence(evidenc
 
 def test_same_line_different_cwe_does_not_merge_even_with_shared_rule() -> None:
     semgrep = finding("command", scanner="semgrep", cwe=["CWE-78"], snippet=None)
-    opengrep = finding("xss", scanner="opengrep", cwe=["CWE-79"], snippet=None)
+    other = finding("xss", scanner="other", cwe=["CWE-79"], snippet=None)
 
-    assert not semantic_match(semgrep, opengrep, line_tolerance=0)
-    output, summary = deduplicate_findings([semgrep, opengrep], line_tolerance=0)
+    assert not semantic_match(semgrep, other, line_tolerance=0)
+    output, summary = deduplicate_findings([semgrep, other], line_tolerance=0)
 
     assert len({row["canonical_finding_id"] for row in output}) == 2
     assert summary["statistics"]["canonical_clusters"] == 2
@@ -160,7 +160,7 @@ def test_same_line_different_sink_does_not_merge() -> None:
     )
     second_sink = finding(
         "second-sink",
-        scanner="opengrep",
+        scanner="other",
         start_col=30,
         end_col=42,
         snippet="os.system(second)",
@@ -183,7 +183,7 @@ def test_same_line_different_sink_does_not_merge() -> None:
 )
 def test_semantic_scope_boundaries_do_not_merge(change: dict[str, Any]) -> None:
     left = finding("left", scanner="semgrep", snippet=None)
-    right_values: dict[str, Any] = {"scanner": "opengrep", "snippet": None, **change}
+    right_values: dict[str, Any] = {"scanner": "other", "snippet": None, **change}
     right = finding("right", **right_values)
 
     output, _ = deduplicate_findings([left, right], line_tolerance=5)
@@ -194,7 +194,7 @@ def test_semantic_scope_boundaries_do_not_merge(change: dict[str, Any]) -> None:
 def test_clustering_is_deterministic_for_every_input_permutation() -> None:
     rows = [
         finding("sg-a", scanner="semgrep", start_line=10, raw_result_ref="raw/sg-a"),
-        finding("og-a", scanner="opengrep", start_line=11, raw_result_ref="raw/og-a"),
+        finding("other-a", scanner="other", start_line=11, raw_result_ref="raw/other-a"),
         finding(
             "sg-b",
             scanner="semgrep",
@@ -205,13 +205,13 @@ def test_clustering_is_deterministic_for_every_input_permutation() -> None:
             raw_result_ref="raw/sg-b",
         ),
         finding(
-            "ql-b",
-            scanner="codeql",
+            "other-b",
+            scanner="other",
             rule_id="python.xss",
             cwe=["CWE-79"],
             snippet="render(user_input)",
             start_line=81,
-            raw_result_ref="raw/ql-b",
+            raw_result_ref="raw/other-b",
         ),
     ]
     expected_output, expected_summary = deduplicate_findings(rows, line_tolerance=2)
@@ -225,8 +225,8 @@ def test_clustering_is_deterministic_for_every_input_permutation() -> None:
 def test_complete_link_clustering_never_creates_a_tolerance_chain() -> None:
     rows = [
         finding("line-10", scanner="semgrep", start_line=10, snippet=None, cwe=[]),
-        finding("line-12", scanner="opengrep", start_line=12, snippet=None, cwe=[]),
-        finding("line-14", scanner="codeql", start_line=14, snippet=None, cwe=[]),
+        finding("line-12", scanner="other", start_line=12, snippet=None, cwe=[]),
+        finding("line-14", scanner="semgrep", start_line=14, snippet=None, cwe=[]),
     ]
 
     output, summary = deduplicate_findings(rows, line_tolerance=2)
@@ -239,7 +239,7 @@ def test_complete_link_clustering_never_creates_a_tolerance_chain() -> None:
 
 
 def test_dedup_does_not_mutate_input() -> None:
-    rows = [finding("left", scanner="semgrep"), finding("right", scanner="opengrep")]
+    rows = [finding("left", scanner="semgrep"), finding("right", scanner="other")]
     original = deepcopy(rows)
 
     deduplicate_findings(rows)
@@ -251,7 +251,7 @@ def test_cli_reads_and_writes_jsonl_with_summary(tmp_path: Path, capsys: pytest.
     input_path = tmp_path / "normalized.jsonl"
     output_path = tmp_path / "deduplicated.jsonl"
     summary_path = tmp_path / "summary.json"
-    rows = [finding("semgrep", scanner="semgrep"), finding("opengrep", scanner="opengrep")]
+    rows = [finding("semgrep", scanner="semgrep"), finding("other", scanner="other")]
     input_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
 
     assert (

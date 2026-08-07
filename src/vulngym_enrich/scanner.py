@@ -24,7 +24,7 @@ from .checkout import (
     repo_slug,
 )
 
-SUPPORTED_SCANNERS = ("semgrep", "opengrep")
+SUPPORTED_SCANNERS = ("semgrep",)
 
 _RETRY_POLICY_SCHEMA_VERSION = 1
 _MAX_COMPLETED_TIMEOUT_ATTEMPTS = 2
@@ -323,9 +323,6 @@ def validate_configuration(
         raise ValueError("scan_profile.scan.semgrep_oss_only must be a boolean")
     if scan.get("metrics") not in {"on", "off", "auto"}:
         raise ValueError("scan_profile.scan.metrics must be one of: on, off, auto")
-    if not isinstance(scan.get("opengrep_taint_intrafile"), bool):
-        raise ValueError("scan_profile.scan.opengrep_taint_intrafile must be a boolean")
-
     policy = _object(scan_profile.get("policy"), "scan_profile.policy")
     for field in (
         "scan_exact_vulnerable_commit",
@@ -756,12 +753,9 @@ def build_scan_argv(
         argv.extend([config_flag, str(config)])
 
     scan = scan_profile["scan"]
-    if scanner_name == "semgrep":
-        if scan["semgrep_oss_only"]:
-            argv.append("--oss-only")
-        argv.extend(["--metrics", scan["metrics"]])
-    elif scan["opengrep_taint_intrafile"]:
-        argv.append("--taint-intrafile")
+    if scan["semgrep_oss_only"]:
+        argv.append("--oss-only")
+    argv.extend(["--metrics", scan["metrics"]])
     argv.extend(
         [
             "--dataflow-traces",
@@ -1982,7 +1976,7 @@ def _argparse_positive_int(value: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run pinned Semgrep/OpenGrep jobs over exact VulnGym snapshots."
+        description="Run pinned Semgrep jobs over exact VulnGym snapshots."
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--scanner-lock", type=Path, default=Path("config/scanners.lock.json"))

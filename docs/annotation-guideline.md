@@ -2,7 +2,9 @@
 
 ## Đơn vị chú thích
 
-Một phát hiện đã chuẩn hóa của trình quét tại đúng một ảnh chụp `(repo_url, commit)`. Các kết quả trùng lặp do trình quét tạo ra được gom nhóm nhưng vẫn giữ lại đầy đủ thông tin nguồn gốc từ mọi công cụ.
+Một finding Semgrep đã chuẩn hóa tại đúng một snapshot `(repo_url, commit)`. Các
+kết quả Semgrep trùng nhau được gom nhóm nhưng vẫn giữ `finding_id`, rule, vị trí
+và provenance của bản ghi gốc. Dataset active không nhận finding từ scanner khác.
 
 ## Các nhãn
 
@@ -24,7 +26,7 @@ Một phát hiện của trình quét không khớp với mục nào trong VulnG
 Mỗi bản ghi đã được thẩm định phải bao gồm:
 
 1. Kho lưu trữ và commit chính xác.
-2. Trình quét, phiên bản trình quét, commit của bộ quy tắc và ID quy tắc.
+2. Semgrep `1.171.0`, commit của bộ quy tắc và ID quy tắc.
 3. Vị trí phát hiện và dấu vết nguồn/đích liên quan nếu có.
 4. Lập luận ngắn gọn kèm tham chiếu đến tệp và dòng tương đối so với gốc kho lưu trữ.
 5. Danh tính hoặc bí danh ổn định của người chú thích, cùng dấu thời gian.
@@ -54,7 +56,7 @@ timestamp có múi giờ, evidence, reason code và liên kết VulnGym bắt bu
 
 ## Quy trình đánh giá
 
-1. Chuẩn hóa và loại bỏ kết quả trùng lặp trong đầu ra của trình quét.
+1. Chuẩn hóa và loại bỏ kết quả trùng lặp trong đầu ra Semgrep.
 2. Thử đối sánh nghiêm ngặt hoặc có độ tin cậy cao với các mục VulnGym đã biết.
 3. Thực hiện phân loại sơ bộ với sự hỗ trợ của tác nhân mà không cung cấp nhãn, nội dung cảnh báo bảo mật, quyền truy cập web hoặc bản vá đã sửa lỗi.
 4. Yêu cầu con người đánh giá mọi lỗ hổng mới có khả năng tồn tại, các trường hợp chưa chắc chắn và tập kiểm thử được niêm phong.

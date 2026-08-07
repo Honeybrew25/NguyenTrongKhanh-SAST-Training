@@ -29,7 +29,7 @@ COMMIT = "a" * 40
 RULESET = "b" * 40
 
 
-def _context(source_root: Path, scanner: str = "opengrep", version: str = "1.26.0") -> NormalizationContext:
+def _context(source_root: Path, scanner: str = "semgrep", version: str = "1.171.0") -> NormalizationContext:
     return NormalizationContext(
         repo_url=REPO,
         commit=COMMIT,
@@ -45,7 +45,7 @@ def _context(source_root: Path, scanner: str = "opengrep", version: str = "1.26.
 
 def _json_result() -> dict:
     return {
-        "version": "1.26.0",
+        "version": "1.171.0",
         "results": [
             {
                 "check_id": "python.lang.security.command-injection",
@@ -64,14 +64,14 @@ def _json_result() -> dict:
     }
 
 
-def _sarif(version: str = "1.26.0") -> dict:
+def _sarif(version: str = "1.171.0") -> dict:
     return {
         "version": "2.1.0",
         "runs": [
             {
                 "tool": {
                     "driver": {
-                        "name": "opengrep",
+                        "name": "semgrep",
                         "semanticVersion": version,
                         "rules": [
                             {
@@ -153,15 +153,6 @@ def test_json_normalization_joins_sarif_codeflow_and_source_snippet(tmp_path: Pa
     ]
     assert merged[0]["provenance"]["raw_result_ref"].endswith("#results/0")
     assert len(merged[0]["provenance"]["evidence_refs"]) == 2
-
-
-def test_sarif_normalizer_accepts_codeql_path_problem(tmp_path: Path) -> None:
-    context = _context(tmp_path, scanner="codeql", version="2.20.0")
-    sarif = _sarif(version="2.20.0")
-    sarif["runs"][0]["tool"]["driver"]["name"] = "CodeQL"
-    finding = normalize_sarif(sarif, context)[0]
-    assert finding["scanner"] == {"name": "codeql", "version": "2.20.0"}
-    assert len(finding["dataflow_trace"]) == 2
 
 
 def test_normalizer_rejects_unpinned_scanner_version(tmp_path: Path) -> None:

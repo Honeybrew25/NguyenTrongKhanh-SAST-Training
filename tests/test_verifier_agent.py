@@ -77,7 +77,7 @@ def _record() -> dict[str, Any]:
         "member_finding_ids": ["finding-member"],
         "repo_url": "https://github.com/example/project",
         "commit": "a" * 40,
-        "scanner": {"name": "codeql", "version": "2.25.5"},
+        "scanner": {"name": "semgrep", "version": "1.171.0"},
         "rule": {
             "id": "py/example",
             "ruleset_commit": "b" * 40,
@@ -94,7 +94,7 @@ def _record() -> dict[str, Any]:
         "dataflow_trace": [],
         "snippet": "run(clean)",
         "fingerprint": "fingerprint",
-        "provenance": {"raw_result_ref": "raw.sarif#result/0", "scan_id": "scan"},
+        "provenance": {"raw_result_ref": "raw.json#result/0", "scan_id": "scan"},
     }
 
 
@@ -346,6 +346,68 @@ def test_agent_uses_controller_tools_and_freezes_structured_evidence(
     assert prediction["evidence"][0]["file"] == "src/app.py"
     assert "3:     clean = allowed.get(value)" in prediction["evidence"][0]["code"]
     assert all("vulngym_matches" not in request["finding"] for request in provider.requests)
+    _assert_prediction_schema(prediction)
+
+
+def test_agent_splits_oversized_evidence_without_dropping_source_lines(
+    tmp_path: Path,
+) -> None:
+    snapshot = _snapshot(tmp_path)
+    source = snapshot / "src" / "app.py"
+    source.write_text(
+        "".join(f"line {number}\n" for number in range(1, 31)),
+        encoding="utf-8",
+    )
+    tool_response = _response(
+        action="REQUEST_TOOLS",
+        working_hypothesis="Inspect the complete relevant block.",
+        tool_requests=[
+            {
+                "tool": "read_file",
+                "path": "src/app.py",
+                "query": None,
+                "start_line": 1,
+                "end_line": 30,
+                "case_sensitive": None,
+            }
+        ],
+        verdict=None,
+        confidence=None,
+        reason_codes=[],
+        attacker_capability=None,
+        entry_point=None,
+        security_effect=None,
+        controls=None,
+        reasoning=None,
+        evidence=[],
+        abstain_reason=None,
+    )
+    final_response = _response(
+        evidence=[
+            {
+                "file": "src/app.py",
+                "start_line": 1,
+                "end_line": 21,
+                "description": "The complete cited block supports the decision.",
+            }
+        ]
+    )
+
+    prediction = run_finding(
+        record=_record(),
+        snapshot=snapshot,
+        profile=_profile(max_evidence_lines=10),
+        provider=FakeProvider([tool_response, final_response]),
+        case_directory=tmp_path / "case",
+    )
+
+    assert [node["line"] for node in prediction["evidence"]] == [
+        "1-10",
+        "11-20",
+        21,
+    ]
+    assert "1: line 1" in prediction["evidence"][0]["code"]
+    assert "21: line 21" in prediction["evidence"][2]["code"]
     _assert_prediction_schema(prediction)
 
 
@@ -778,11 +840,6 @@ def test_verifier_schemas_accept_current_blind_inputs() -> None:
         / "artifacts"
         / "annotation-queue"
         / "day2-full-v4-20260804-semgrep-only"
-        / "blind-verifier-input.jsonl",
-        ROOT
-        / "artifacts"
-        / "normalized"
-        / "codeql-full-security-extended-wsl-v1-20260806"
         / "blind-verifier-input.jsonl",
     ]
     for input_path in inputs:

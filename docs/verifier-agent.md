@@ -1,8 +1,11 @@
-# Agent xác minh finding
+# Agent xác minh finding Semgrep
+
+Phạm vi active chỉ gồm corpus Semgrep: 16 finding trên 9 snapshot. Agent không
+nhận artifact từ scanner khác và không ghép kết quả ngoài corpus đã đóng băng.
 
 ## Trách nhiệm
 
-Agent chỉ trả lời finding có phải một lỗ hổng thực sự theo mô hình đe dọa đã công bố hay không:
+Agent chỉ trả lời finding Semgrep có phải một lỗ hổng thực sự theo mô hình đe dọa đã công bố hay không:
 
 - `TRUE_POSITIVE`: có attacker capability cụ thể, entry point reachable, tác động bảo mật và không có control hữu hiệu chặn khai thác.
 - `FALSE_POSITIVE`: source chứng minh một điều kiện phủ định cụ thể; bắt buộc có reason code và bằng chứng.
@@ -26,7 +29,7 @@ Source comment, scanner message và tên file được coi là dữ liệu khôn
 
 ## Tính tái lập và resume
 
-`config/verifier-profile-v1.json`, `config/verifier-prompt-v1.md`, blind input, response schema, prediction schema, controller và predictions đều được ghi SHA-256 trong `verifier-run.json`. Mỗi finding có thư mục case riêng chứa status, response và event log từng bước. Chỉ case `SUCCESS` có đủ identity, checksum và schema hợp lệ mới được resume. Prediction đã bị sửa làm resume dừng fail-closed để điều tra; chỉ dùng `--force` sau khi xác định rõ nguyên nhân. Lỗi provider, timeout, source mismatch hoặc protocol violation là `FAILED` và không sinh prediction.
+`config/verifier-profile-v1.json`, prompt của release, blind input, response schema, prediction schema, controller và predictions đều được ghi SHA-256 trong `verifier-run.json`. Mỗi finding có thư mục case riêng chứa status, response và event log từng bước. Chỉ case `SUCCESS` có đủ identity, checksum và schema hợp lệ mới được resume. Prediction đã bị sửa làm resume dừng fail-closed để điều tra; không dùng `--force` cho lượt chính thức. Lỗi provider, timeout, source mismatch hoặc protocol violation là `FAILED` và không sinh prediction.
 
 Run chính thức bắt buộc ghim model bằng `--model`, cấm lọc subset bằng `--finding-id`, và bắt buộc `summary.json` tồn tại với `complete:true`, record count, tên input và SHA-256 khớp chính xác. Input thiếu proof hoặc còn partial chỉ được chạy với `--development-run`; prediction khi đó có `evaluation_eligible:false` và exclusion reason rõ ràng. Token usage do provider báo được cộng theo case và toàn run.
 
@@ -34,10 +37,8 @@ Run chính thức bắt buộc ghim model bằng `--model`, cấm lọc subset b
 
 ## Trình tự đánh giá
 
-1. Hoàn tất scanner/postprocess và đóng băng blind input.
+1. Hoàn tất scan và hậu xử lý Semgrep, sau đó đóng băng blind input.
 2. Chạy agent trong run directory mới; yêu cầu `verifier-run.json` có `complete: true`.
 3. Đóng băng predictions và checksum trước khi mở metadata matcher/gold.
 4. Người thẩm định độc lập dùng cùng threat model, không xem prediction trước khi khóa label.
 5. Chạy evaluator trên exact finding ID. `UNCERTAIN`, `DUPLICATE`, `OUT_OF_SCOPE` được báo riêng, không đổi thành false positive.
-
-Queue CodeQL có `complete: false` chỉ dùng cho smoke/development. Không báo precision, recall hoặc F1 chính thức từ queue thay đổi trong lúc batch đang chạy.

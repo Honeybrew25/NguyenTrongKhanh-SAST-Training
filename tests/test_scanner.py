@@ -58,8 +58,6 @@ def _frozen_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     tools.mkdir(parents=True)
     semgrep = tools / "semgrep.exe"
     semgrep.write_bytes(b"mock semgrep executable")
-    opengrep = tools / "opengrep.exe"
-    opengrep.write_bytes(b"mock executable")
 
     manifest = {
         "schema_version": 1,
@@ -91,11 +89,6 @@ def _frozen_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
                 "local_path": "tools/semgrep.exe",
                 "local_executable_sha256": hashlib.sha256(semgrep.read_bytes()).hexdigest(),
             },
-            "opengrep": {
-                "version": "1.26.0",
-                "local_path": "tools/opengrep.exe",
-                "local_executable_sha256": hashlib.sha256(opengrep.read_bytes()).hexdigest(),
-            },
         },
     }
     profile = {
@@ -121,7 +114,6 @@ def _frozen_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
             "respect_git_ignore": True,
             "semgrep_oss_only": True,
             "metrics": "off",
-            "opengrep_taint_intrafile": True,
             "exclude": ["**/node_modules/**", "**/vendor/**"],
             "outputs": ["json", "sarif"],
         },
@@ -316,7 +308,7 @@ def test_failed_attempt_retries_immutably_success_resumes_and_force_reruns(
         if argv[0] == "git":
             return _git_completed(argv)
         if argv[-1] == "--version":
-            return _completed(argv, 0, "OpenGrep 1.26.0\n")
+            return _completed(argv, 0, "1.171.0\n")
         scan_count += 1
         _write_scanner_outputs(argv)
         return_code = next(scan_return_codes)
@@ -333,7 +325,7 @@ def test_failed_attempt_retries_immutably_success_resumes_and_force_reruns(
         "project_root": tmp_path,
         "output_root": tmp_path / "outputs",
         "repo_urls": [PYTHON_REPO],
-        "scanners": ["opengrep"],
+        "scanners": ["semgrep"],
         "rule_configs": [python_rules],
     }
 
@@ -344,7 +336,7 @@ def test_failed_attempt_retries_immutably_success_resumes_and_force_reruns(
         / "retry-test"
         / "example__python-project"
         / PYTHON_COMMIT
-        / "opengrep"
+        / "semgrep"
     )
     first_status_path = scanner_directory / "attempts" / "0001" / "status.json"
     first_status_bytes = first_status_path.read_bytes()
@@ -383,9 +375,9 @@ def test_failed_attempt_retries_immutably_success_resumes_and_force_reruns(
     )
     assert forced["status_counts"] == {"SUCCESS": 1}
     assert third_status["forced"] is True
-    assert "--taint-intrafile" in third_status["argv"]
-    assert third_status["argv"].count("-f") == 1
-    assert third_status["argv"][third_status["argv"].index("-f") + 1] == str(
+    assert "--oss-only" in third_status["argv"]
+    assert third_status["argv"].count("--config") == 1
+    assert third_status["argv"][third_status["argv"].index("--config") + 1] == str(
         python_rules.resolve()
     )
     assert scan_count == 3
@@ -405,7 +397,7 @@ def test_failed_attempt_retries_immutably_success_resumes_and_force_reruns(
 def test_disabled_scanner_cannot_be_selected(tmp_path: Path) -> None:
     manifest_path, lock_path, profile_path, _, _ = _frozen_inputs(tmp_path)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["scanners"]["opengrep"]["enabled"] = False
+    lock["scanners"]["semgrep"]["enabled"] = False
     _write_json(lock_path, lock)
 
     with pytest.raises(ValueError, match="disabled scanners cannot be selected"):
@@ -416,7 +408,7 @@ def test_disabled_scanner_cannot_be_selected(tmp_path: Path) -> None:
             scan_id="disabled-scanner",
             project_root=tmp_path,
             repo_urls=[PYTHON_REPO],
-            scanners=["opengrep"],
+            scanners=["semgrep"],
         )
 
 

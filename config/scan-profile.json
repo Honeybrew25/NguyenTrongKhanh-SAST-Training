@@ -33,7 +33,6 @@
     "git_ignore_parse_failure_fallback": "no_git_ignore_on_clean_snapshot",
     "semgrep_oss_only": true,
     "metrics": "off",
-    "opengrep_taint_intrafile": true,
     "exclude": [
       "**/node_modules/**",
       "**/.venv/**",

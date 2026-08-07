@@ -1,135 +1,74 @@
-# VulnGym SAST Enrichment
+# VulnGym Semgrep Finding Verifier
 
-Kho này dùng để:
+Project dùng Semgrep để tạo finding từ Tencent VulnGym, chuẩn hóa dữ liệu và dùng
+agent đọc source tại đúng commit để đề xuất `TRUE_POSITIVE`, `FALSE_POSITIVE`
+hoặc `ABSTAIN`. Người thẩm định độc lập gán nhãn sau khi prediction được khóa;
+chỉ khi đó project mới tính precision, recall và F1.
 
-1. chạy công cụ SAST trên các source snapshot của Tencent VulnGym;
-2. chuẩn hóa và loại finding trùng;
-3. dùng agent đọc source để xác minh finding;
-4. để người thẩm định độc lập gán nhãn có bằng chứng;
-5. tính precision, recall và F1 sau khi đủ nhãn.
+Phạm vi hiện tại: **16 Semgrep finding trên 9 source snapshot**. Finding chưa
+được xác minh luôn là candidate, không mặc định là false positive.
 
-Phiên bản đầu tiên hiện tập trung vào **Semgrep-only**: 16 finding trên 9
-snapshot. OpenGrep đã bị loại khỏi workflow. CodeQL là baseline riêng và không
-được trộn với kết quả Semgrep.
+## Kết quả cuối
 
-## Quy tắc quan trọng
+Release v5 đã hoàn tất toàn bộ workflow: 16/16 prediction thành công, prediction
+đã khóa, evaluator đã chấp nhận đủ 16 gold-label record và sinh metrics. Nhãn
+tham chiếu gồm 14 `TP_KNOWN`, 1 `FP_CONFIRMED` và 1 `UNCERTAIN`.
 
-- Finding không khớp VulnGym **không có nghĩa** là false positive.
-- Agent không được xem nhãn, bản vá hoặc kết quả thẩm định trước đó.
-- Thứ tự bắt buộc là: `Run → Freeze → Human review → Evaluate`.
-- Chỉ công bố metric khi đủ prediction đã khóa và nhãn người thật có bằng chứng.
-- Không dùng `--force`, `--development-run`, `--finding-id` hoặc
-  `--allow-incomplete-gold` cho lượt đánh giá chính thức.
+Trên 9 case mà agent đưa ra quyết định và gold label đủ điều kiện, kết quả là
+TP=3, FP=0, TN=1, FN=5: precision **1,0000**, recall **0,3750** và F1
+**0,5455**. Agent abstain 6/15 case được đánh giá, nên selective coverage là
+**0,6000**. Một case `UNCERTAIN` được báo cáo riêng và không đưa vào ma trận.
 
-Các phiên bản được ghim trong [config/scanners.lock.json](config/scanners.lock.json)
-và [config/semgrep-verifier-agent-v1.json](config/semgrep-verifier-agent-v1.json).
+## Yêu cầu
 
-## 1. Chuẩn bị và kiểm tra
+- Git, Python 3.11+, `uv` và Codex CLI đã đăng nhập.
+- Windows dùng PowerShell 7; Linux cần `pwsh` để chạy cùng wrapper đã ghim.
+- Lượt chính thức phải theo đúng thứ tự `Doctor → Validate → Run → Freeze →
+  PrepareHumanReview → Evaluate`.
 
-Cần có Git, Python 3.11+, `uv` và các Git submodule. Action `Run` của agent còn
-cần Codex CLI đã đăng nhập và có quota.
+## 1. Cài đặt và kiểm thử
 
-Chạy từ thư mục gốc của repository.
-
-### Windows — PowerShell
+Windows — PowerShell:
 
 ```powershell
 git submodule update --init --recursive
 uv sync --extra dev
 $env:PYTHONUTF8 = "1"
-uv run vulngym-audit `
-  --benchmark benchmark/VulnGym `
-  --output artifacts/manifests/vulngym-v0.1.4.json
-uv run pytest
+uv run pytest -q
 ```
+## 2. Chạy agent chính thức v5
 
-### Linux — Bash
-
-```bash
-git submodule update --init --recursive
-uv sync --extra dev
-export PYTHONUTF8=1
-uv run vulngym-audit \
-  --benchmark benchmark/VulnGym \
-  --output artifacts/manifests/vulngym-v0.1.4.json
-uv run pytest
-```
-
-Agent v1 dùng wrapper PowerShell. Trên Linux cần cài PowerShell 7 để có lệnh
-`pwsh`. Chỉ chạy `Run` khi `Doctor` trả về
-`ProviderIdentityMatches=True`; nếu sai, không bỏ qua gate mà phải dùng môi
-trường đúng bản đã ghim hoặc tạo một release Linux riêng.
-
-## 2. Chạy agent Semgrep v1
-
-Wrapper dùng cố định corpus, model, prompt, schema và thư mục output của release
-v1. Chỉ action `Run` gọi provider. Chạy từng action theo thứ tự dưới đây và chỉ
-đi tiếp khi action trước thành công.
-
-| Action | Mục đích | Điều kiện để đi tiếp |
-| --- | --- | --- |
-| `Doctor` | Kiểm tra công cụ và bản đã ghim | `LocalComponentsReady=True` |
-| `Validate` | Kiểm tra blind input và source | đủ 16 finding, 9 snapshot |
-| `Status` | Xem checkpoint hiện tại | không có lượt chạy trùng |
-| `Run` | Chạy/resume agent | `COMPLETE`, 16/16 `SUCCESS` |
-| `Freeze` | Khóa checksum prediction | tạo `prediction-freeze.json` |
-| `PrepareHumanReview` | Tạo gói cho người thẩm định | không chứa prediction |
-| `Evaluate` | Tính metric | đủ 16 human gold label hợp lệ |
-
-### Windows — PowerShell
+Windows — PowerShell:
 
 ```powershell
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action Doctor
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action Validate
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action Status
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action Run
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action Freeze
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action PrepareHumanReview
-$gold = "artifacts/human-review/semgrep-agent-v1-20260806/human-gold-labels.jsonl"
-if (-not (Test-Path -LiteralPath $gold)) {
-  Copy-Item `
-    artifacts/human-review/semgrep-agent-v1-20260806/human-gold-labels.template.jsonl `
-    $gold
-}
-.\scripts\semgrep_verifier_agent_v1.ps1 -Action Evaluate
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action Doctor
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action Validate
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action Status
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action Run
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action Freeze
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action PrepareHumanReview
+.\scripts\semgrep_verifier_agent_v5.ps1 -Action Evaluate
 ```
 
-### Linux — Bash
+Chỉ chạy `Run` khi `Doctor` báo `ProviderIdentityMatches=True` và `Validate` báo
+`VALID`. Nếu bị gián đoạn, gọi lại `Run`; runner tái sử dụng case `SUCCESS` có
+identity đúng và chỉ retry case lỗi.
 
-```bash
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 -Action Doctor
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 -Action Validate
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 -Action Status
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 -Action Run
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 -Action Freeze
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 \
-  -Action PrepareHumanReview
-cp -n \
-  artifacts/human-review/semgrep-agent-v1-20260806/human-gold-labels.template.jsonl \
-  artifacts/human-review/semgrep-agent-v1-20260806/human-gold-labels.jsonl
-pwsh -NoProfile -File ./scripts/semgrep_verifier_agent_v1.ps1 -Action Evaluate
-```
+Sau `PrepareHumanReview`, giao gói source-only cho một người thẩm định không xem
+prediction. Người đó điền đủ 16 nhãn có lý do và bằng chứng `file:dòng` vào
+`human-gold-labels.jsonl`. `Evaluate` sẽ dừng nếu thiếu prediction đã khóa, thiếu
+nhãn, reviewer không phải người thật hoặc evidence không hợp lệ.
 
-Sau `PrepareHumanReview`, người thẩm định phải điền đủ 16 nhãn trong
-`human-gold-labels.jsonl`, kèm lý do và bằng chứng `file:dòng`, rồi mới chạy
-`Evaluate`. Người này không được mở prediction của agent trước khi khóa nhãn.
-
-Nếu `Run` bị gián đoạn, chạy lại `Status`, xử lý lỗi provider rồi gọi lại `Run`;
-không xóa case đã thành công. `Evaluate` sẽ tự dừng nếu một gate chưa hợp lệ.
-
-## 3. Kết quả nằm ở đâu?
+## 3. Dữ liệu chính
 
 - Corpus mù: `artifacts/verifier-corpora/semgrep-day2-v1-20260806/`
-- Trạng thái và prediction: `artifacts/verifier-runs/semgrep-agent-v1-20260806/`
-- Gói thẩm định và metric: `artifacts/human-review/semgrep-agent-v1-20260806/`
-- Source đúng commit: `worktrees/`
+- Run v5: `artifacts/verifier-runs/semgrep-agent-v5-20260807/`
+- Gói thẩm định: `artifacts/human-review/semgrep-agent-v5-20260807/`
+- Metrics: `artifacts/human-review/semgrep-agent-v5-20260807/metrics.json`
+- Dataset FP làm giàu: `data/enriched/day2-semgrep-reviewed.jsonl`
+- Source snapshot: `worktrees/`
+- Release ghim: `config/semgrep-verifier-agent-v5.json`
 
-`artifacts/` là dữ liệu sinh ra trong lúc chạy và được Git bỏ qua.
-
-## 4. Tài liệu chi tiết
-
-- [Quickstart agent v1](docs/semgrep-verifier-agent-v1.md)
-- [Thiết kế và ranh giới an toàn của agent](docs/verifier-agent.md)
-- [Quy tắc gán nhãn](docs/annotation-guideline.md)
-- [Báo cáo độc lập của Semgrep agent v1](reports/semgrep-agent-v1-20260806.md)
-- [Tiến độ CodeQL/WSL](reports/day-4.md)
+Xem [quickstart v5](docs/semgrep-verifier-agent-v5.md), [thiết kế
+agent](docs/verifier-agent.md), [quy tắc gán nhãn](docs/annotation-guideline.md)
+và [báo cáo tổng kết](reports/final-semgrep-project-20260807.md).

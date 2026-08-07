@@ -4,11 +4,15 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_PATH = ROOT / "config" / "semgrep-verifier-agent-v1.json"
+RELEASE_PATHS = (
+    ROOT / "config" / "semgrep-verifier-agent-v1.json",
+    ROOT / "config" / "semgrep-verifier-agent-v5.json",
+)
 
 
 def _sha256(path: Path) -> str:
@@ -19,15 +23,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def test_semgrep_agent_v1_release_identity_is_complete() -> None:
-    release = json.loads(RELEASE_PATH.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("release_path", RELEASE_PATHS)
+def test_semgrep_agent_release_identity_is_complete(release_path: Path) -> None:
+    release = json.loads(release_path.read_text(encoding="utf-8"))
 
-    assert release["release_id"] == "semgrep-verifier-agent-v1"
+    assert release["release_id"] == release_path.stem
     assert release["scope"]["scanner"] == "semgrep"
     assert release["run"]["evaluation_mode"] == "OFFICIAL"
     assert release["run"]["force_allowed"] is False
-    assert "codeql" not in RELEASE_PATH.read_text(encoding="utf-8").casefold()
-    assert "opengrep" not in RELEASE_PATH.read_text(encoding="utf-8").casefold()
+    assert "codeql" not in release_path.read_text(encoding="utf-8").casefold()
+    assert "opengrep" not in release_path.read_text(encoding="utf-8").casefold()
 
     identities = release["identity"]["files"]
     assert identities
@@ -38,8 +43,9 @@ def test_semgrep_agent_v1_release_identity_is_complete() -> None:
         assert _sha256(path) == identity["sha256"], identity["path"]
 
 
-def test_semgrep_agent_v1_corpus_is_blind_semgrep_only() -> None:
-    release = json.loads(RELEASE_PATH.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("release_path", RELEASE_PATHS)
+def test_semgrep_agent_corpus_is_blind_semgrep_only(release_path: Path) -> None:
+    release = json.loads(release_path.read_text(encoding="utf-8"))
     input_path = ROOT / release["corpus"]["input"]["path"]
     summary_path = ROOT / release["corpus"]["summary"]["path"]
     schema = json.loads(
