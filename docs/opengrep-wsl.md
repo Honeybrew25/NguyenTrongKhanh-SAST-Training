@@ -149,3 +149,43 @@ artifacts/normalized/<scan-id>-opengrep-only/
 Finding OpenGrep phải được giữ trong corpus thử nghiệm riêng. Dataset active
 hiện vẫn là Semgrep-only; không nhập finding OpenGrep vào dataset FP hiện tại
 nếu chưa tạo version/policy mới và chưa có human adjudication.
+
+## Release r1 đã hoàn thành
+
+Lượt chính thức ngày 2026-08-12 dùng scan-id:
+
+```text
+opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812
+```
+
+Kết quả: 166/166 job `SUCCESS`, 113.756 finding, 112.739 canonical cluster,
+14 `CANDIDATE_REVIEW` và 112.725 `UNMATCHED`. Có 8.459 scanner diagnostic,
+gồm 8.438 `PartialParsing`, 12 timeout ở mức rule/scanner, 8 `Syntax error` và
+1 `Other syntax error`. Đây không phải job timeout: không job nào thất bại hoặc
+hết hạn 7.200 giây.
+
+Tạo lại annotation queue và frozen verifier corpus:
+
+```bash
+uv run vulngym-opengrep-release \
+  --normalized-dir artifacts/normalized/opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812-opengrep-only \
+  --queue-dir artifacts/annotation-queue/opengrep-v1.22.0-security-r1-20260812 \
+  --corpus-dir artifacts/verifier-corpora/opengrep-security-r1-20260812 \
+  --corpus-id opengrep-security-r1-20260812 \
+  --created-at 2026-08-12T13:22:57+07:00
+```
+
+Queue chứa finding đầy đủ, metadata match chỉ dành cho human review, template
+gold label và input verifier mù. Input mù loại canonical ID, VulnGym entry/report
+ID, match, patch và adjudication label. Corpus được giữ riêng ở
+`artifacts/verifier-corpora/opengrep-security-r1-20260812/`; validator runtime
+và JSON Schema Semgrep đã được đóng băng nên không bị sửa. Ở đúng ranh giới
+input, builder ánh xạ `{name: opengrep, version: 1.22.0}` thành định danh tương
+thích `{name: other, version: "opengrep 1.22.0"}`; queue và release manifest
+vẫn giữ scanner gốc là OpenGrep.
+
+Release r1 chưa công bố precision/recall/F1 của OpenGrep verifier. Muốn có các
+metric đó phải chạy agent trên corpus mù, khóa prediction, human review độc lập
+rồi mới evaluate theo đúng gate của Semgrep. Kết quả so với human review cũ chỉ
+là kiểm tra retention và nằm trong
+`data/releases/opengrep-security-r1-20260812.json`.

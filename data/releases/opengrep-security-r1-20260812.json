@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "release_id": "opengrep-security-r1-20260812",
+  "created_at": "2026-08-12T13:22:57+07:00",
+  "status": "SCAN_AND_CORPUS_READY",
+  "scope": {
+    "scanner": "opengrep",
+    "scanner_version": "1.22.0",
+    "scan_id": "opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812",
+    "snapshots": 166,
+    "ruleset": "security-only",
+    "candidate_policy": "CANDIDATE_REVIEW_ONLY",
+    "label_policy": "UNLABELED_NOT_FALSE_POSITIVE"
+  },
+  "pins": {
+    "scanner_executable_sha256": "45bcd58440e397ed52c50e953ccf5948909ea77087c9186fc7d277216f62e319",
+    "source_ruleset_commit": "40b8c63f75dc7c22c8a77482d73bfb864b146f7e",
+    "security_ruleset_commit": "0c8a62c126651c4640e7c634912acc16de878282",
+    "manifest_sha256": "86dc0c249deb415ebffba5d54e81bd86dfb5d509745f4e97c7158a3d3c3cf9aa",
+    "scanner_lock_sha256": "0ec8167a61e6294c40efb270a878d66034ffd8c4491524ce12daf80bf51cfbac",
+    "scan_profile_sha256": "97aa0869563f1dedf63589c3819a9cd30ee95ad7e6a8101d97438db9518691a1"
+  },
+  "execution": {
+    "environment": "Ubuntu WSL2 on Linux ext4",
+    "batch_workers": 2,
+    "scanner_internal_jobs": 3,
+    "prefetch_workers": 4,
+    "max_memory_mb_per_scanner": 6144,
+    "job_timeout_seconds": 7200
+  },
+  "coverage": {
+    "jobs_expected": 166,
+    "jobs_accounted": 166,
+    "status_counts": {
+      "SUCCESS": 166
+    },
+    "complete": true
+  },
+  "results": {
+    "findings": 113756,
+    "unique_rules": 129,
+    "unique_files": 2082,
+    "with_dataflow_trace": 16886,
+    "trace_nodes": 61651,
+    "canonical_clusters": 112739,
+    "exact_duplicate_observations": 1017,
+    "exact_duplicate_clusters": 677,
+    "matching": {
+      "STRICT_SOURCE_SINK": 0,
+      "STRONG_SOURCE_SINK": 0,
+      "CANDIDATE_REVIEW": 14,
+      "UNMATCHED": 112725
+    },
+    "scanner_diagnostics": {
+      "observations": 8459,
+      "jobs_with_errors": 149,
+      "by_type": {
+        "PartialParsing": 8438,
+        "Timeout": 12,
+        "Syntax error": 8,
+        "Other syntax error": 1
+      }
+    }
+  },
+  "corpus": {
+    "id": "opengrep-security-r1-20260812",
+    "candidate_clusters": 14,
+    "candidate_observations": 14,
+    "blind_input_records": 14,
+    "blind_input_sha256": "7abb5bd8064a00fe4da18f16f1c4a2b6e8fc2d31d7b886fea5c9c14e6cc5bc7a",
+    "queue_summary_sha256": "602c71742dea9b417c34e230bf87b5f802de9cd71d49fe0caaa6194d137c8bb6",
+    "corpus_summary_sha256": "27bc6f43e1936a39cf4f3bf377275d3888618bab2ea3df29243fc76468eebcce",
+    "leakage_control": {
+      "human_match_metadata_included": false,
+      "prior_predictions_included": false,
+      "prior_technical_labels_included": false,
+      "provisional_metrics_included": false
+    }
+  },
+  "integrity": {
+    "full_pipeline_summary_sha256": "e54b6c5c0413338181292902210b32e7ec59a1678bf09d5b6a768b31f1bf6d54",
+    "deduplicated_findings_sha256": "a432411e9ea289575b49efeccccd02dafe3d5d132908dfcf2ff76c354c215ed9",
+    "canonical_matches_sha256": "45899f9d52e04af9bcd9f359a3624badb4d8215b04495898518f3795f4dc360c",
+    "candidate_findings_sha256": "4af16aaf37c0b55991b87b8841d60d75cca59e05a42c19238bed15f8d70bee17",
+    "human_candidate_matches_sha256": "26cd814854a3a0b9c927518818d39f8b47ee98af3e6ce899e0e7145efb69eb49",
+    "human_gold_template_sha256": "841a9592492ccaa15f4e86c8f5b7a7a0507925d453dee760addfb9fa13d3db05"
+  },
+  "identity": {
+    "files": [
+      {
+        "path": "src/vulngym_enrich/opengrep_release.py",
+        "sha256": "a0dcfb63d28bd8c3ced4e2ddcd97db9ec72623ce698deaca56dc7e502ea936e2"
+      },
+      {
+        "path": "src/vulngym_enrich/scanner.py",
+        "sha256": "89da6d5f1829416b478e2976e3e471f17de0ef486a6090986d07a765c0331bee"
+      },
+      {
+        "path": "src/vulngym_enrich/full_pipeline.py",
+        "sha256": "63cf2e107855da33da553fd1ab732803958c2ff118d66b6c843c74f981db1a8b"
+      },
+      {
+        "path": "scripts/opengrep_scan_wsl.sh",
+        "sha256": "1f0ba73d755c60210ae58d195324e20a39191b282a2d57ed92f91b2dfdf5ce18"
+      },
+      {
+        "path": "config/scanners.opengrep-security-wsl.lock.json",
+        "sha256": "0ec8167a61e6294c40efb270a878d66034ffd8c4491524ce12daf80bf51cfbac"
+      },
+      {
+        "path": "config/scan-profile.opengrep-security-wsl-fast.json",
+        "sha256": "97aa0869563f1dedf63589c3819a9cd30ee95ad7e6a8101d97438db9518691a1"
+      },
+      {
+        "path": "pyproject.toml",
+        "sha256": "281dd0bd03d36f74a1a646c7ce553d491061ebc4d56e985efc82145fe7827d39"
+      }
+    ]
+  },
+  "semgrep_comparison": {
+    "reference_release": "semgrep-verifier-agent-v5",
+    "reference_pipeline_sha256": "4640401a113d3920716aba9f903ae64440cbcdc93a5d6bc52280af01d0076e54",
+    "reference_candidate_findings_sha256": "9b1d9dcb7cf3cb88acb3f9cebbe2ba60c2e6c369f45efd495c2c3d74f3131afd",
+    "reference_human_gold_sha256": "904c8f92380c3a90aee4ca2fad5e390df646268a9f398a4532a713a251863696",
+    "semantic_key": [
+      "repo_url",
+      "commit",
+      "location.file",
+      "location.start_line",
+      "rule.id"
+    ],
+    "semantic_clusters": {
+      "semgrep": 110437,
+      "opengrep": 110130,
+      "intersection": 108644,
+      "semgrep_only": 1793,
+      "opengrep_only": 1486,
+      "jaccard": 0.9707030726481599
+    },
+    "reviewed_candidate_retention": {
+      "semgrep_candidates": 16,
+      "opengrep_candidates": 14,
+      "semantic_overlap": 14,
+      "reference_labels_in_overlap": {
+        "TP_KNOWN": 12,
+        "FP_CONFIRMED": 1,
+        "UNCERTAIN": 1
+      },
+      "message_equal": 14,
+      "snippet_equal": 14,
+      "exact_location_equal": 12,
+      "dataflow_trace_equal": 13,
+      "missing_reviewed_findings": [
+        {
+          "repo_url": "https://github.com/openclaw/openclaw",
+          "commit": "be37b39782e0799ba5b9533561de6d128d50c863",
+          "file": "src/signal/daemon.ts",
+          "start_line": 52,
+          "rule_id": "javascript.lang.security.detect-child-process",
+          "reference_label": "TP_KNOWN"
+        },
+        {
+          "repo_url": "https://github.com/paperclipai/paperclip",
+          "commit": "50cd76d8a3f2fc06d1a5af63840abd3d7a1bcd02",
+          "file": "server/src/services/workspace-runtime.ts",
+          "start_line": 479,
+          "rule_id": "javascript.lang.security.detect-child-process",
+          "reference_label": "TP_KNOWN"
+        }
+      ]
+    },
+    "interpretation": "Reference labels are retention evidence only and are not imported as OpenGrep gold labels."
+  },
+  "evaluation": {
+    "status": "NOT_RUN",
+    "precision": null,
+    "recall": null,
+    "f1": null,
+    "reason": "OpenGrep agent predictions and independent human gold labels have not been produced and frozen."
+  },
+  "gates": {
+    "complete_scan_required": true,
+    "prediction_freeze_before_human_review": true,
+    "human_gold_before_metrics": true,
+    "unmatched_is_false_positive": false
+  }
+}
