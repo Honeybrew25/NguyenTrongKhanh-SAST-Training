@@ -172,6 +172,26 @@ def test_rule_id_drops_workspace_dependent_absolute_prefix(tmp_path: Path) -> No
     assert finding["rule"]["id"] == "python.lang.security.stable-rule"
 
 
+def test_opengrep_uses_semgrep_compatible_json_and_rule_ids(tmp_path: Path) -> None:
+    ruleset_root = tmp_path / "rules" / "semgrep-rules"
+    raw = _json_result()
+    raw["version"] = "1.22.0"
+    raw["results"][0]["check_id"] = (
+        _encoded_rule_prefix(ruleset_root) + ".python.lang.security.stable-rule"
+    )
+    context = replace(
+        _context(tmp_path),
+        scanner_name="opengrep",
+        scanner_version="1.22.0",
+        ruleset_root=ruleset_root,
+    )
+
+    finding = normalize_semgrep_json(raw, context)[0]
+
+    assert finding["scanner"] == {"name": "opengrep", "version": "1.22.0"}
+    assert finding["rule"]["id"] == "python.lang.security.stable-rule"
+
+
 def test_status_input_prefers_contained_frozen_copy(tmp_path: Path) -> None:
     attempt = tmp_path / "attempt"
     frozen = attempt / "inputs" / "scan-profile.json"

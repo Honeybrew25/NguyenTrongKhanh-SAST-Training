@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -238,6 +240,15 @@ def test_successful_job_routes_language_and_records_complete_provenance(
         b"mock semgrep executable"
     ).hexdigest()
     assert status["ruleset_commit"] == RULESET_COMMIT
+    assert status["runner"]["git_commit"] == RULESET_COMMIT
+    assert status["runner"]["worktree_clean"] is True
+    assert status["diagnostics"] == {
+        "errors_total": 0,
+        "error_types": {},
+        "partial_parsing_files": [],
+        "findings": 0,
+        "scanned_paths": 0,
+    }
     assert status["rule_selection"] == {
         "source": "language-routing",
         "languages": ["python"],
@@ -284,6 +295,179 @@ def test_successful_job_routes_language_and_records_complete_provenance(
     assert scan_calls[0][1]["cwd"] == snapshot_path.resolve()
     assert scan_calls[0][1]["timeout"] == 600
     assert not list(attempt.glob("*.tmp"))
+
+
+def test_opengrep_argv_uses_compatible_flags_without_removed_metrics(
+    tmp_path: Path,
+) -> None:
+    _, _, profile_path, _, python_rules = _frozen_inputs(tmp_path)
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+
+    argv = scanner.build_scan_argv(
+        "opengrep",
+        "opengrep",
+        [python_rules],
+        profile,
+        tmp_path / "attempt",
+    )
+
+    assert argv[:2] == ["opengrep", "scan"]
+    assert argv[argv.index("-f") + 1] == str(python_rules)
+    assert "--config" not in argv
+    assert "--metrics" not in argv
+    assert "--disable-version-check" in argv
+    assert argv[argv.index("--output") + 1] == os.devnull
+    assert "--oss-only" in argv
+    assert "--dataflow-traces" in argv
+    assert "--json-output" in argv and "--sarif-output" in argv
+    assert argv[-1] == "."
+
+
+def test_raw_diagnostics_preserve_partial_parsing_as_a_warning(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "raw.json",
+        {
+            "results": [{"check_id": "one"}],
+            "paths": {"scanned": ["src/app.ts"]},
+            "errors": [
+                {
+                    "type": ["PartialParsing", []],
+                    "level": "warn",
+                    "path": "src\\app.ts",
+                }
+            ],
+        },
+    )
+
+    assert scanner._raw_json_diagnostics(tmp_path) == {
+        "errors_total": 1,
+        "error_types": {"PartialParsing": 1},
+        "partial_parsing_files": ["src/app.ts"],
+        "findings": 1,
+        "scanned_paths": 1,
+    }
+
+
+def test_batch_workers_run_snapshots_concurrently_and_keep_report_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path, lock_path, profile_path, _, _ = _frozen_inputs(tmp_path)
+    snapshots = {
+        PYTHON_REPO: tmp_path / "python-snapshot",
+        TYPESCRIPT_REPO: tmp_path / "typescript-snapshot",
+    }
+    snapshots[PYTHON_REPO].mkdir()
+    snapshots[TYPESCRIPT_REPO].mkdir()
+    (snapshots[PYTHON_REPO] / "module.py").write_text("value = 1\n", encoding="utf-8")
+    (snapshots[TYPESCRIPT_REPO] / "module.ts").write_text(
+        "const value = 1\n", encoding="utf-8"
+    )
+    barrier = threading.Barrier(2)
+    state_lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal active, peak
+        _assert_safe_process_call(argv, kwargs)
+        if argv[0] == "git":
+            return _git_completed(argv)
+        if argv[-1] == "--version":
+            return _completed(argv, 0, "1.171.0\n")
+        with state_lock:
+            active += 1
+            peak = max(peak, active)
+        barrier.wait(timeout=5)
+        _write_scanner_outputs(argv)
+        with state_lock:
+            active -= 1
+        return _completed(argv, 0)
+
+    monkeypatch.setattr(
+        scanner, "checkout_snapshot", lambda repo_url, *args, **kwargs: snapshots[repo_url]
+    )
+    monkeypatch.setattr(scanner.subprocess, "run", fake_run)
+
+    report = scanner.run_batch(
+        manifest_path=manifest_path,
+        scanner_lock_path=lock_path,
+        scan_profile_path=profile_path,
+        scan_id="parallel-batch",
+        project_root=tmp_path,
+        output_root=tmp_path / "outputs",
+        scanners=["semgrep"],
+        batch_workers=2,
+    )
+
+    assert peak == 2
+    assert report["batch_workers"] == 2
+    assert [job["repo_url"] for job in report["jobs"]] == [PYTHON_REPO, TYPESCRIPT_REPO]
+    run = json.loads(
+        (tmp_path / "outputs" / "parallel-batch" / "run.json").read_text(encoding="utf-8")
+    )
+    assert run["execution"]["batch_workers"] == 2
+    assert run["execution"]["scanner_internal_jobs"] == 4
+
+
+def test_prefetch_workers_fetch_repositories_concurrently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path, lock_path, profile_path, _, _ = _frozen_inputs(tmp_path)
+    snapshots = {
+        PYTHON_REPO: tmp_path / "python-snapshot",
+        TYPESCRIPT_REPO: tmp_path / "typescript-snapshot",
+    }
+    snapshots[PYTHON_REPO].mkdir()
+    snapshots[TYPESCRIPT_REPO].mkdir()
+    (snapshots[PYTHON_REPO] / "module.py").write_text("value = 1\n", encoding="utf-8")
+    (snapshots[TYPESCRIPT_REPO] / "module.ts").write_text(
+        "const value = 1\n", encoding="utf-8"
+    )
+    barrier = threading.Barrier(2)
+    fetched: list[str] = []
+    fetched_lock = threading.Lock()
+
+    def fake_ensure_mirror(repo_url: str, *args: Any, **kwargs: Any) -> Path:
+        with fetched_lock:
+            fetched.append(repo_url)
+        barrier.wait(timeout=5)
+        return tmp_path / "mirrors" / repo_url.rsplit("/", 1)[-1]
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        _assert_safe_process_call(argv, kwargs)
+        if argv[0] == "git":
+            return _git_completed(argv)
+        if argv[-1] == "--version":
+            return _completed(argv, 0, "1.171.0\n")
+        _write_scanner_outputs(argv)
+        return _completed(argv, 0)
+
+    monkeypatch.setattr(scanner, "ensure_mirror", fake_ensure_mirror)
+    monkeypatch.setattr(
+        scanner, "checkout_snapshot", lambda repo_url, *args, **kwargs: snapshots[repo_url]
+    )
+    monkeypatch.setattr(scanner.subprocess, "run", fake_run)
+
+    report = scanner.run_batch(
+        manifest_path=manifest_path,
+        scanner_lock_path=lock_path,
+        scan_profile_path=profile_path,
+        scan_id="parallel-prefetch",
+        project_root=tmp_path,
+        output_root=tmp_path / "outputs",
+        scanners=["semgrep"],
+        prefetch=True,
+        prefetch_workers=2,
+    )
+
+    assert sorted(fetched) == [PYTHON_REPO, TYPESCRIPT_REPO]
+    assert report["status_counts"] == {"SUCCESS": 2}
+    run = json.loads(
+        (tmp_path / "outputs" / "parallel-prefetch" / "run.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert run["execution"]["prefetch_workers"] == 2
 
 
 def test_failed_attempt_retries_immutably_success_resumes_and_force_reruns(

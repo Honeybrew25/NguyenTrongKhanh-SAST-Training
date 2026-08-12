@@ -14,7 +14,7 @@ from .audit import load_jsonl
 from .candidate_matcher import aggregate_canonical_matches, match_candidates
 from .dedup import DEFAULT_LINE_TOLERANCE, deduplicate_findings
 from .normalizer import finding_statistics, main as normalize_main, write_jsonl
-from .scanner import SUPPORTED_SCANNERS
+from .scanner import DEFAULT_SCANNERS, SUPPORTED_SCANNERS
 
 
 _FROZEN_INPUT_NAMES = ("manifest", "scanner_lock", "scan_profile")
@@ -302,7 +302,7 @@ def discover_scan_jobs(scan_root: Path) -> list[dict[str, Any]]:
 def validate_scan_coverage(
     jobs: Iterable[dict[str, Any]],
     manifest: dict[str, Any],
-    scanners: Sequence[str] = SUPPORTED_SCANNERS,
+    scanners: Sequence[str] = DEFAULT_SCANNERS,
 ) -> dict[str, Any]:
     if not scanners or len(set(scanners)) != len(scanners):
         raise ValueError("scanners must be a non-empty sequence without duplicates")
@@ -705,7 +705,7 @@ def run_full_pipeline(
     manifest_path: Path,
     entries_path: Path,
     output_directory: Path,
-    scanners: Sequence[str] = SUPPORTED_SCANNERS,
+    scanners: Sequence[str] = DEFAULT_SCANNERS,
     line_tolerance: int = DEFAULT_LINE_TOLERANCE,
     allow_incomplete: bool = False,
 ) -> dict[str, Any]:
@@ -823,7 +823,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest_path=args.manifest,
             entries_path=args.entries,
             output_directory=args.output_dir,
-            scanners=args.scanners or SUPPORTED_SCANNERS,
+            scanners=args.scanners or DEFAULT_SCANNERS,
             line_tolerance=args.line_tolerance,
             allow_incomplete=args.allow_incomplete,
         )

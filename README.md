@@ -22,7 +22,8 @@ TP=3, FP=0, TN=1, FN=5: precision **1,0000**, recall **0,3750** và F1
 ## Yêu cầu
 
 - Git, Python 3.11+, `uv` và Codex CLI đã đăng nhập.
-- Windows dùng PowerShell 7; Linux cần `pwsh` để chạy cùng wrapper đã ghim.
+- Agent workflow trên Windows dùng PowerShell 7. OpenGrep trên Ubuntu WSL2 dùng
+  Bash và không cần `pwsh`.
 - Lượt chính thức phải theo đúng thứ tự `Doctor → Validate → Run → Freeze →
   PrepareHumanReview → Evaluate`.
 
@@ -36,6 +37,25 @@ uv sync --extra dev
 $env:PYTHONUTF8 = "1"
 uv run pytest -q
 ```
+
+OpenGrep trên Ubuntu WSL2 dùng workflow độc lập, không thay đổi release Semgrep
+v5 hiện tại:
+
+```bash
+cd ~/projects/NguyenTrongKhanh-SAST-Training-opengrep
+bash scripts/opengrep_scan_wsl.sh setup
+bash scripts/opengrep_scan_wsl.sh doctor
+bash scripts/opengrep_scan_wsl.sh smoke
+```
+
+Project và toàn bộ cache/worktree OpenGrep phải nằm trên filesystem Linux của
+WSL (ext4), không đặt dưới `/mnt/c` hoặc `/mnt/d`. Full run mặc định dùng ruleset
+security-only, prefetch 4 repository song song và quét 2 snapshot song song × 3
+worker OpenGrep. Chạy `bash scripts/opengrep_scan_wsl.sh benchmark` nếu muốn đo
+lại mức `jobs=4/6/8` trên máy hiện tại.
+
+Xem [hướng dẫn OpenGrep WSL](docs/opengrep-wsl.md) trước khi chạy full batch.
+
 ## 2. Chạy agent chính thức v5
 
 Windows — PowerShell:

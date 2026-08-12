@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -24,7 +25,8 @@ from .checkout import (
     repo_slug,
 )
 
-SUPPORTED_SCANNERS = ("semgrep",)
+SUPPORTED_SCANNERS = ("semgrep", "opengrep")
+DEFAULT_SCANNERS = ("semgrep",)
 
 _RETRY_POLICY_SCHEMA_VERSION = 1
 _MAX_COMPLETED_TIMEOUT_ATTEMPTS = 2
@@ -262,7 +264,14 @@ def validate_configuration(
                 )
 
     scanner_configs = _object(scanner_lock.get("scanners"), "scanner_lock.scanners")
-    for scanner_name in SUPPORTED_SCANNERS:
+    if not scanner_configs:
+        raise ValueError("scanner_lock.scanners must contain at least one scanner")
+    unsupported_scanner_configs = sorted(set(scanner_configs) - set(SUPPORTED_SCANNERS))
+    if unsupported_scanner_configs:
+        raise ValueError(
+            f"scanner_lock.scanners contains unsupported scanners: {unsupported_scanner_configs}"
+        )
+    for scanner_name in scanner_configs:
         scanner_config = _object(
             scanner_configs.get(scanner_name), f"scanner_lock.scanners.{scanner_name}"
         )
@@ -755,7 +764,16 @@ def build_scan_argv(
     scan = scan_profile["scan"]
     if scan["semgrep_oss_only"]:
         argv.append("--oss-only")
-    argv.extend(["--metrics", scan["metrics"]])
+    # OpenGrep removed Semgrep's telemetry/metrics option in v1.6.0. Keep the
+    # pinned profile value for comparable provenance, but only pass it to the
+    # engine that implements the flag.
+    if scanner_name == "semgrep":
+        argv.extend(["--metrics", scan["metrics"]])
+    else:
+        # Each snapshot is an isolated, pinned invocation. Avoid one network
+        # version check and a potentially very large human-readable finding
+        # stream per job; JSON and SARIF remain the authoritative raw outputs.
+        argv.extend(["--disable-version-check", "--output", os.devnull])
     argv.extend(
         [
             "--dataflow-traces",
@@ -841,6 +859,37 @@ def _validate_raw_outputs(attempt_directory: Path) -> list[str]:
         if not isinstance(value, dict):
             errors.append(f"invalid {name}: top-level value must be an object")
     return errors
+
+
+def _raw_json_diagnostics(attempt_directory: Path) -> dict[str, Any]:
+    """Summarize non-fatal scanner errors without changing SUCCESS semantics."""
+
+    raw = _read_json_object(attempt_directory / "raw.json", "raw scanner JSON")
+    raw_errors = raw.get("errors") or []
+    if not isinstance(raw_errors, list):
+        raise ValueError("raw scanner JSON errors must be a list")
+    error_types: Counter[str] = Counter()
+    partial_paths: set[str] = set()
+    for raw_error in raw_errors:
+        error = raw_error if isinstance(raw_error, dict) else {"message": str(raw_error)}
+        error_type: Any = error.get("type") or error.get("error_type") or "unknown"
+        if isinstance(error_type, list) and error_type:
+            error_type = error_type[0]
+        normalized_type = str(error_type)
+        error_types[normalized_type] += 1
+        if normalized_type == "PartialParsing":
+            path = str(error.get("path") or "").replace("\\", "/")
+            if path:
+                partial_paths.add(path)
+    results = raw.get("results") or []
+    scanned = (raw.get("paths") or {}).get("scanned") or []
+    return {
+        "errors_total": len(raw_errors),
+        "error_types": dict(sorted(error_types.items())),
+        "partial_parsing_files": sorted(partial_paths),
+        "findings": len(results) if isinstance(results, list) else None,
+        "scanned_paths": len(scanned) if isinstance(scanned, list) else None,
+    }
 
 
 def _attempt_numbers(scanner_directory: Path) -> list[int]:
@@ -1081,6 +1130,50 @@ def _ensure_scan_run_metadata(scan_root: Path, metadata: dict[str, Any]) -> None
         _atomic_write_json(run_path, metadata)
 
 
+def _runner_provenance(project_root: Path) -> dict[str, Any]:
+    """Identify the code and Git state that controls scan execution."""
+
+    controller_paths = [
+        Path(__file__).resolve(),
+        Path(__file__).with_name("checkout.py").resolve(),
+    ]
+    wrapper = (project_root / "scripts" / "opengrep_scan_wsl.sh").resolve()
+    if wrapper.is_file():
+        controller_paths.append(wrapper)
+    files: dict[str, str] = {}
+    for path in controller_paths:
+        try:
+            label = path.relative_to(project_root).as_posix()
+        except ValueError:
+            label = str(path)
+        files[label] = _sha256_file(path)
+
+    commit_result = _run_process(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    status_result = _run_process(
+        ["git", "-C", str(project_root), "status", "--porcelain=v1", "--untracked-files=all"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    git_available = commit_result.returncode == 0 and status_result.returncode == 0
+    status_lines = status_result.stdout.splitlines() if git_available else []
+    return {
+        "git_commit": commit_result.stdout.strip() if git_available else None,
+        "worktree_clean": not status_lines if git_available else None,
+        "worktree_status_sha256": (
+            hashlib.sha256(("\n".join(status_lines) + "\n").encode("utf-8")).hexdigest()
+            if status_lines
+            else None
+        ),
+        "files": dict(sorted(files.items())),
+    }
+
+
 def _retry_policy(scan_id: str) -> dict[str, Any]:
     return {
         "schema_version": _RETRY_POLICY_SCHEMA_VERSION,
@@ -1239,6 +1332,7 @@ def _run_job(
     work_root: Path,
     output_root: Path,
     input_provenance: dict[str, dict[str, str]],
+    runner_provenance: dict[str, Any],
     force: bool,
     refresh: bool,
     job_timeout_seconds: int | float | None,
@@ -1331,6 +1425,8 @@ def _run_job(
         "logs": {"stdout": "stdout.log", "stderr": "stderr.log"},
         "checksums": {},
         "inputs": input_provenance,
+        "runner": runner_provenance,
+        "diagnostics": None,
         "error": None,
         "retry_override": (
             {
@@ -1399,10 +1495,13 @@ def _run_job(
         status["argv_attempts"] = [{"mode": "configured", "argv": argv}]
         _write_attempt_status(scanner_directory, attempt_directory, status)
 
+        configured_scanner_timeout = (
+            None if job_timeout_seconds is None else float(job_timeout_seconds)
+        )
         scanner_deadline = (
             None
-            if job_timeout_seconds is None
-            else time.monotonic() + float(job_timeout_seconds)
+            if configured_scanner_timeout is None
+            else time.monotonic() + configured_scanner_timeout
         )
 
         def remaining_scanner_timeout() -> float | None:
@@ -1414,7 +1513,7 @@ def _run_job(
             result = _run_scanner_process(
                 argv,
                 cwd=snapshot_path,
-                timeout=remaining_scanner_timeout(),
+                timeout=configured_scanner_timeout,
             )
             stdout = result.stdout
             stderr = result.stderr
@@ -1524,6 +1623,7 @@ def _run_job(
                 final_status = "FAILED"
                 error = {"type": "OutputValidationError", "message": "; ".join(output_errors)}
             else:
+                status["diagnostics"] = _raw_json_diagnostics(attempt_directory)
                 final_status = "SUCCESS"
                 error = None
 
@@ -1554,6 +1654,7 @@ def _run_job(
         "commit": snapshot["commit"],
         "scanner": scanner_name,
         "status": finished["status"],
+        "diagnostics": finished.get("diagnostics"),
         "attempt": next_attempt,
         "status_path": str(attempt_directory / "status.json"),
     }
@@ -1712,10 +1813,13 @@ def run_batch(
     force: bool = False,
     refresh: bool = False,
     prefetch: bool = False,
+    prefetch_workers: int = 1,
+    batch_workers: int = 1,
     job_timeout_seconds: int | float | None = None,
     project_root: Path | None = None,
     retry_quarantined: bool = False,
     retry_reason: str | None = None,
+    require_clean_runner: bool = False,
 ) -> dict[str, Any]:
     if not _SCAN_ID.fullmatch(scan_id):
         raise ValueError(
@@ -1724,6 +1828,8 @@ def run_batch(
         )
     if job_timeout_seconds is not None:
         _positive_number(job_timeout_seconds, "job_timeout_seconds")
+    _positive_int(prefetch_workers, "prefetch_workers")
+    _positive_int(batch_workers, "batch_workers")
     if retry_quarantined:
         if force:
             raise ValueError("--retry-quarantined cannot be combined with --force")
@@ -1761,7 +1867,8 @@ def run_batch(
         selected_scanners = [
             scanner_name
             for scanner_name in SUPPORTED_SCANNERS
-            if scanner_lock["scanners"][scanner_name].get("enabled", True)
+            if scanner_name in scanner_lock["scanners"]
+            and scanner_lock["scanners"][scanner_name].get("enabled", True)
         ]
     else:
         selected_scanners = list(scanners)
@@ -1772,6 +1879,9 @@ def run_batch(
     unsupported = sorted(set(selected_scanners) - set(SUPPORTED_SCANNERS))
     if unsupported:
         raise ValueError(f"unsupported scanners: {unsupported}")
+    missing = sorted(set(selected_scanners) - set(scanner_lock["scanners"]))
+    if missing:
+        raise ValueError(f"selected scanners are missing from scanner lock: {missing}")
     disabled = sorted(
         scanner_name
         for scanner_name in selected_scanners
@@ -1815,6 +1925,14 @@ def run_batch(
         if job_timeout_seconds is not None
         else scan_profile["scan"].get("job_timeout_seconds")
     )
+    runner_provenance = _runner_provenance(root)
+    if require_clean_runner and (
+        not runner_provenance["git_commit"] or runner_provenance["worktree_clean"] is not True
+    ):
+        raise RuntimeError(
+            "official scan requires a committed, clean project worktree; "
+            "commit the runner/configuration changes or omit --require-clean-runner for a pilot"
+        )
 
     scanner_pins = {}
     for scanner_name in selected_scanners:
@@ -1827,15 +1945,19 @@ def run_batch(
     _ensure_scan_run_metadata(
         output_root / scan_id,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "scan_id": scan_id,
             "inputs": input_provenance,
             "ruleset_commit": observed_ruleset_commit,
             "scanner_pins": scanner_pins,
+            "runner": runner_provenance,
             "execution": {
                 "job_timeout_seconds": effective_job_timeout,
                 "max_memory_mb": scan_profile["scan"]["max_memory_mb"],
+                "scanner_internal_jobs": scan_profile["scan"]["jobs"],
+                "batch_workers": batch_workers,
                 "prefetch_selected_snapshots": prefetch,
+                "prefetch_workers": prefetch_workers if prefetch else 0,
                 "rule_config_override": [str(path) for path in override_configs],
             },
         },
@@ -1848,13 +1970,26 @@ def run_batch(
         commits_by_repo: dict[str, list[str]] = {}
         for snapshot in selected_snapshots:
             commits_by_repo.setdefault(snapshot["repo_url"], []).append(snapshot["commit"])
-        for repo_url in sorted(commits_by_repo):
+        prefetch_items = sorted(commits_by_repo.items())
+
+        def prefetch_repository(item: tuple[str, list[str]]) -> None:
+            repo_url, required_commits = item
             ensure_mirror(
                 repo_url,
                 cache_root,
                 refresh=refresh,
-                required_commits=commits_by_repo[repo_url],
+                required_commits=required_commits,
             )
+
+        if prefetch_workers == 1:
+            for item in prefetch_items:
+                prefetch_repository(item)
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(prefetch_workers, len(prefetch_items)),
+                thread_name_prefix="vulngym-prefetch",
+            ) as executor:
+                list(executor.map(prefetch_repository, prefetch_items))
 
     job_specs: list[tuple[int, str, str, str, dict[str, Any]]] = []
     for snapshot in selected_snapshots:
@@ -1882,10 +2017,12 @@ def run_batch(
                 )
             )
 
-    jobs: list[dict[str, Any]] = []
-    for _, _, _, scanner_name, snapshot in sorted(
-        job_specs, key=lambda item: item[:4]
-    ):
+    ordered_job_specs = sorted(job_specs, key=lambda item: item[:4])
+
+    def execute_job(
+        job_spec: tuple[int, str, str, str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        _, _, _, scanner_name, snapshot = job_spec
         scanner_directory = (
             output_root
             / scan_id
@@ -1899,50 +2036,57 @@ def run_batch(
                 job_lock_path,
                 timeout_seconds=int(retry_policy["job_lock_timeout_seconds"]),
             ):
-                jobs.append(
-                    _run_job_with_retry_policy(
-                        snapshot=snapshot,
-                        scanner_name=scanner_name,
-                        retry_policy=retry_policy,
-                        retry_policy_sha256=retry_policy_sha256,
-                        retry_quarantined=retry_quarantined,
-                        retry_reason=retry_reason,
-                        run_job_arguments={
-                            "executable": executables[scanner_name],
-                            "observed_version": observed_versions[scanner_name],
-                            "executable_sha256": executable_checksums[scanner_name],
-                            "ruleset_commit": observed_ruleset_commit,
-                            "scan_profile": scan_profile,
-                            "routed_configs": routed_configs,
-                            "override_configs": override_configs,
-                            "language_extensions": language_extensions,
-                            "scan_id": scan_id,
-                            "cache_root": cache_root,
-                            "work_root": work_root,
-                            "output_root": output_root,
-                            "input_provenance": input_provenance,
-                            "force": force,
-                            "refresh": refresh,
-                            "job_timeout_seconds": effective_job_timeout,
-                        },
-                    )
+                return _run_job_with_retry_policy(
+                    snapshot=snapshot,
+                    scanner_name=scanner_name,
+                    retry_policy=retry_policy,
+                    retry_policy_sha256=retry_policy_sha256,
+                    retry_quarantined=retry_quarantined,
+                    retry_reason=retry_reason,
+                    run_job_arguments={
+                        "executable": executables[scanner_name],
+                        "observed_version": observed_versions[scanner_name],
+                        "executable_sha256": executable_checksums[scanner_name],
+                        "ruleset_commit": observed_ruleset_commit,
+                        "scan_profile": scan_profile,
+                        "routed_configs": routed_configs,
+                        "override_configs": override_configs,
+                        "language_extensions": language_extensions,
+                        "scan_id": scan_id,
+                        "cache_root": cache_root,
+                        "work_root": work_root,
+                        "output_root": output_root,
+                        "input_provenance": input_provenance,
+                        "runner_provenance": runner_provenance,
+                        "force": force,
+                        "refresh": refresh,
+                        "job_timeout_seconds": effective_job_timeout,
+                    },
                 )
         except InterprocessLockTimeout as exc:
             if exc.path.resolve() != job_lock_path.resolve():
                 raise
             latest = _latest_attempt(scanner_directory)
-            jobs.append(
-                {
-                    "repo_url": snapshot["repo_url"],
-                    "commit": snapshot["commit"],
-                    "scanner": scanner_name,
-                    "status": "BUSY",
-                    "reason": "job_lock_held",
-                    "attempt": latest[0] if latest is not None else None,
-                    "status_path": str(latest[1] / "status.json") if latest is not None else None,
-                    "scheduling_state": "BUSY",
-                }
-            )
+            return {
+                "repo_url": snapshot["repo_url"],
+                "commit": snapshot["commit"],
+                "scanner": scanner_name,
+                "status": "BUSY",
+                "reason": "job_lock_held",
+                "attempt": latest[0] if latest is not None else None,
+                "status_path": str(latest[1] / "status.json") if latest is not None else None,
+                "scheduling_state": "BUSY",
+            }
+
+    if batch_workers == 1:
+        jobs = [execute_job(job_spec) for job_spec in ordered_job_specs]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=min(batch_workers, len(ordered_job_specs)),
+            thread_name_prefix="vulngym-scan",
+        ) as executor:
+            # executor.map preserves the deterministic job ordering in the report.
+            jobs = list(executor.map(execute_job, ordered_job_specs))
 
     counts = Counter(job["status"] for job in jobs)
     scheduling_counts = Counter(job.get("scheduling_state", "UNKNOWN") for job in jobs)
@@ -1950,6 +2094,7 @@ def run_batch(
         "schema_version": 1,
         "scan_id": scan_id,
         "snapshots_selected": len(selected_snapshots),
+        "batch_workers": batch_workers,
         "jobs_total": len(jobs),
         "status_counts": dict(sorted(counts.items())),
         "scheduling_counts": dict(sorted(scheduling_counts.items())),
@@ -1976,7 +2121,7 @@ def _argparse_positive_int(value: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run pinned Semgrep jobs over exact VulnGym snapshots."
+        description="Run pinned Semgrep-compatible scanner jobs over exact VulnGym snapshots."
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--scanner-lock", type=Path, default=Path("config/scanners.lock.json"))
@@ -2003,6 +2148,23 @@ def main(argv: list[str] | None = None) -> int:
         "--prefetch",
         action="store_true",
         help="fetch every selected commit per repository before creating scan attempts",
+    )
+    parser.add_argument(
+        "--prefetch-workers",
+        type=_argparse_positive_int,
+        default=1,
+        help="repository mirrors to prefetch concurrently (default: 1)",
+    )
+    parser.add_argument(
+        "--batch-workers",
+        type=_argparse_positive_int,
+        default=1,
+        help="snapshot/scanner jobs to execute concurrently (default: 1)",
+    )
+    parser.add_argument(
+        "--require-clean-runner",
+        action="store_true",
+        help="refuse to scan unless the project runner is committed and the worktree is clean",
     )
     parser.add_argument(
         "--force",
@@ -2038,9 +2200,12 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             refresh=args.refresh,
             prefetch=args.prefetch,
+            prefetch_workers=args.prefetch_workers,
+            batch_workers=args.batch_workers,
             job_timeout_seconds=args.job_timeout_seconds,
             retry_quarantined=args.retry_quarantined,
             retry_reason=args.retry_reason,
+            require_clean_runner=args.require_clean_runner,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

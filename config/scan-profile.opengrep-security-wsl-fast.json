@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "rules": {
+    "root": "rules/semgrep-rules-security",
+    "commit": "0c8a62c126651c4640e7c634912acc16de878282",
+    "engines_share_rules": true,
+    "language_configs": {
+      "python": ["python"],
+      "javascript": ["javascript"],
+      "typescript": ["javascript", "typescript"],
+      "go": ["go"]
+    },
+    "language_extensions": {
+      "python": [".py"],
+      "javascript": [".js", ".jsx", ".mjs", ".cjs"],
+      "typescript": [".ts", ".tsx", ".mts", ".cts"],
+      "go": [".go"]
+    },
+    "validated_rule_counts": {
+      "python": 269,
+      "javascript": 169,
+      "typescript": 18,
+      "go": 73
+    },
+    "derivation": {
+      "selection": "metadata.category == security",
+      "source_ruleset_commit": "40b8c63f75dc7c22c8a77482d73bfb864b146f7e",
+      "source_manifest": "rules/semgrep-rules-security/SOURCE.json",
+      "source_manifest_sha256": "bb3519605977c44469cac822ef07e1d7fe987fceafd34c88a16dd318cf8fe004",
+      "generator": "scripts/build_opengrep_security_ruleset.py",
+      "pyyaml_version": "6.0.2"
+    }
+  },
+  "scan": {
+    "timeout_seconds_per_rule": 30,
+    "job_timeout_seconds": 7200,
+    "max_memory_mb": 6144,
+    "max_target_bytes": 1000000,
+    "jobs": 3,
+    "respect_git_ignore": true,
+    "git_ignore_parse_failure_fallback": "no_git_ignore_on_clean_snapshot",
+    "semgrep_oss_only": true,
+    "metrics": "off",
+    "exclude": [
+      "**/node_modules/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "vendor",
+      "dist",
+      "**/build/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "generated",
+      "**/third_party/**",
+      "**/*.min.js"
+    ],
+    "outputs": ["json", "sarif"]
+  },
+  "policy": {
+    "scan_exact_vulnerable_commit": true,
+    "preserve_raw_output": true,
+    "unmatched_is_not_false_positive": true,
+    "security_category_only": true
+  }
+}

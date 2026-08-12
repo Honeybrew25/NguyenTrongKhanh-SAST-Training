@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "generated_on": "2026-08-11",
+  "benchmark": {
+    "name": "Tencent/VulnGym",
+    "tag": "v0.1.4",
+    "commit": "cd69f7e163e08485ab5496115ae03439cda6e27e"
+  },
+  "ruleset": {
+    "name": "derived/semgrep-rules-security",
+    "commit": "0c8a62c126651c4640e7c634912acc16de878282",
+    "path": "rules/semgrep-rules-security",
+    "policy": "Byte-preserving security-only derivation from pinned semgrep/semgrep-rules.",
+    "source_name": "semgrep/semgrep-rules",
+    "source_commit": "40b8c63f75dc7c22c8a77482d73bfb864b146f7e",
+    "source_manifest_sha256": "bb3519605977c44469cac822ef07e1d7fe987fceafd34c88a16dd318cf8fe004"
+  },
+  "scanners": {
+    "opengrep": {
+      "enabled": true,
+      "version": "1.22.0",
+      "local_path": "cache/tools/opengrep/v1.22.0/opengrep",
+      "local_verified": true,
+      "local_executable_sha256": "45bcd58440e397ed52c50e953ccf5948909ea77087c9186fc7d277216f62e319",
+      "platform": "linux-x86_64",
+      "release_asset": "https://github.com/opengrep/opengrep/releases/download/v1.22.0/opengrep_manylinux_x86"
+    }
+  }
+}

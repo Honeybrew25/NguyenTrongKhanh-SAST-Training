@@ -4,11 +4,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-wsl/
 
 # Generated data and caches
 artifacts/
 cache/
 worktrees/
+rules/semgrep-rules-security/
 reports/generated/
 
 # Scanner output
