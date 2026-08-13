@@ -2,29 +2,22 @@
 
 Cập nhật lần cuối: **13/08/2026**
 
-Phạm vi hiện tại: **OpenGrep 1.22.0**
-
-CodeQL full scan: **đang chạy, chưa đưa vào số liệu tổng hợp**
-
-Tài liệu này là nơi tra cứu chung cho kết quả chuẩn hóa và gộp trùng của từng
-scanner. OpenGrep được ghi nhận từ release đã hoàn tất. Phần CodeQL sẽ được bổ
-sung vào chính tài liệu này sau khi full scan có coverage hoàn chỉnh và output
-đã được normalize. Hai scanner là hai baseline độc lập; không trộn finding hoặc
-metrics của chúng.
+Phạm vi hiện tại: **OpenGrep 1.22.0**. Đây là baseline SAST duy nhất được dùng
+cho kết quả và đánh giá của project.
 
 ## 1. Tóm tắt kết quả
 
-| Chỉ số | OpenGrep | CodeQL full |
-|---|---:|---:|
-| Trạng thái scan | 166/166 `SUCCESS` | Đang chạy |
-| Raw/normalized observations | 113.756 | Chờ |
-| Canonical clusters | 112.739 | Chờ |
-| Quan sát trùng được nhận diện | 1.017 | Chờ |
-| Cluster có nhiều quan sát | 677 | Chờ |
-| Singleton clusters | 112.062 | Chờ |
-| Finding có dataflow trace | 16.886 | Chờ |
-| Unique rules | 129 | Chờ |
-| Unique files | 2.082 | Chờ |
+| Chỉ số | OpenGrep |
+|---|---:|
+| Trạng thái scan | 166/166 `SUCCESS` |
+| Raw/normalized observations | 113.756 |
+| Canonical clusters | 112.739 |
+| Quan sát trùng được nhận diện | 1.017 |
+| Cluster có nhiều quan sát | 677 |
+| Singleton clusters | 112.062 |
+| Finding có dataflow trace | 16.886 |
+| Unique rules | 129 |
+| Unique files | 2.082 |
 
 Đơn vị dùng cho lấy mẫu và human review là **canonical cluster**, không phải số
 dòng observation. Vì vậy population OpenGrep hiện tại là **112.739 nhóm cảnh
@@ -223,38 +216,8 @@ Lệnh gọi `vulngym-full-pipeline` với scanner `opengrep`, kiểm tra covera
 provenance trước khi normalize. Nếu batch không hoàn chỉnh, pipeline mặc định
 dừng thay vì xuất báo cáo một phần.
 
-## 9. Phần chờ bổ sung: CodeQL full scan
-
-Không dùng kết quả pilot 3 job làm kết quả full. Chỉ cập nhật phần này sau khi:
-
-1. Toàn bộ plan CodeQL được accounted và không còn job `RUNNING`, `FAILED`,
-   `TIMEOUT` hoặc `INTERRUPTED` chưa xử lý.
-2. Query coverage của `security-extended` hoàn chỉnh, kể cả khi dùng query lane.
-3. Chạy normalize thành công và `summary.json` báo `complete: true`.
-4. Kiểm tra checksum của normalized observations, canonicalized observations và
-   dedup summary.
-
-Khi CodeQL hoàn tất, bổ sung tối thiểu:
-
-| Trường cần bổ sung | Giá trị |
-|---|---|
-| Scan ID/profile/query packs | Chờ |
-| Planned/successful jobs | Chờ |
-| Normalized observations | Chờ |
-| Unique rules/files | Chờ |
-| Findings có code flow | Chờ |
-| Canonical clusters | Chờ |
-| Duplicate observations/clusters | Chờ |
-| Match tiers với VulnGym | Chờ |
-| Output paths và SHA-256 | Chờ |
-| Diagnostics/coverage limitations | Chờ |
-
-Sau đó cập nhật bảng tóm tắt ở đầu tài liệu và thêm một mục so sánh OpenGrep với
-CodeQL. So sánh phải theo cùng snapshot/commit và semantic key đã công bố;
-không gộp metrics, không dùng scanner này làm ground truth cho scanner kia.
-
-## 10. Lịch sử cập nhật
+## 9. Lịch sử cập nhật
 
 | Ngày | Thay đổi |
 |---|---|
-| 13/08/2026 | Tạo báo cáo; ghi kết quả Normalize + Deduplicate OpenGrep và khung chờ CodeQL full. |
+| 13/08/2026 | Ghi kết quả Normalize + Deduplicate OpenGrep; xác nhận OpenGrep là baseline SAST duy nhất của project. |

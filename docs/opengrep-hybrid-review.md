@@ -111,5 +111,5 @@ HUMAN_AUDIT_FRACTION=0.20 bash scripts/opengrep_hybrid_review.sh reconcile
 - Chỉ có nhãn máy đồng thuận cộng một phần con người xem: chỉ gọi là
   **exploratory hybrid metrics**.
 - Không đổi tên `silver-consensus.jsonl` thành `human-gold-labels.jsonl`.
-- CodeQL có thể bổ sung bằng chứng hoặc phát hiện, nhưng không được xem là đáp án
-  đúng tự động.
+- Chỉ dùng finding và provenance OpenGrep trong quy trình này; không bổ sung kết
+  quả từ scanner SAST khác vào population hoặc metrics.

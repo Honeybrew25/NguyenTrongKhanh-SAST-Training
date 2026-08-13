@@ -69,18 +69,11 @@ lại mức `jobs=4/6/8` trên máy hiện tại.
 
 Xem [hướng dẫn OpenGrep WSL](docs/opengrep-wsl.md) trước khi chạy full batch.
 
-CodeQL dùng runner và database riêng. Hai profile WSL đã được thiết lập cho
-`code-scanning` (nhanh) và `security-extended` (độ phủ rộng):
-
-```bash
-bash scripts/codeql_scan_wsl.sh setup
-bash scripts/codeql_scan_wsl.sh doctor
-bash scripts/codeql_scan_wsl.sh plan
-bash scripts/codeql_scan_wsl.sh pilot
-```
-
-Xem [hướng dẫn CodeQL WSL](docs/codeql-wsl.md) để chọn profile, chạy ba queue
-main/Go/OpenClaw, theo dõi elapsed time và normalize kết quả.
+Project đã dừng và loại bỏ baseline CodeQL ngày 13/08/2026 sau hai lần timeout
+trên OpenClaw. Kết quả SAST đang sử dụng cho project và báo cáo đánh giá là
+OpenGrep r1; dữ liệu CodeQL dở dang không được dùng làm finding, ground truth
+hoặc metrics. Quyết định và bằng chứng retirement được lưu tại
+[báo cáo bàn giao cho mentor](reports/opengrep-only-retirement-20260813.md).
 
 Để tái tạo queue và corpus OpenGrep từ normalized output đã hoàn chỉnh:
 

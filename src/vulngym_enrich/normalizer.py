@@ -34,7 +34,7 @@ class NormalizationContext:
             raise ValueError("repo_url must be a public GitHub HTTPS URL")
         if not _SHA40.fullmatch(self.commit):
             raise ValueError("commit must be a lowercase 40-character SHA-1")
-        if self.scanner_name not in {"semgrep", "opengrep", "codeql", "other"}:
+        if self.scanner_name not in {"semgrep", "opengrep", "other"}:
             raise ValueError(f"unsupported scanner name: {self.scanner_name}")
         if not self.scanner_version:
             raise ValueError("scanner_version must not be empty")
