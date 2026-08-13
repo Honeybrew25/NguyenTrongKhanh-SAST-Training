@@ -1,11 +1,5 @@
 # Hướng dẫn chú thích phát hiện
 
-## Đơn vị chú thích
-
-Một finding Semgrep đã chuẩn hóa tại đúng một snapshot `(repo_url, commit)`. Các
-kết quả Semgrep trùng nhau được gom nhóm nhưng vẫn giữ `finding_id`, rule, vị trí
-và provenance của bản ghi gốc. Dataset active không nhận finding từ scanner khác.
-
 ## Các nhãn
 
 - `TP_KNOWN`: lỗ hổng có thể bị khai thác và được liên kết với một cảnh báo bảo mật trong VulnGym.
@@ -17,29 +11,7 @@ và provenance của bản ghi gốc. Dataset active không nhận finding từ 
 
 Chỉ `TP_KNOWN`, `TP_NOVEL` và `FP_CONFIRMED` được đưa vào ma trận nhầm lẫn chính. Các trạng thái còn lại được báo cáo riêng.
 
-## Lối tắt bị nghiêm cấm
-
-Một phát hiện của trình quét không khớp với mục nào trong VulnGym **không mặc nhiên là kết quả dương tính giả**. VulnGym không tuyên bố bao phủ toàn bộ lỗ hổng của từng kho lưu trữ.
-
-## Bằng chứng bắt buộc
-
-Mỗi bản ghi đã được thẩm định phải bao gồm:
-
-1. Kho lưu trữ và commit chính xác.
-2. Semgrep `1.171.0`, commit của bộ quy tắc và ID quy tắc.
-3. Vị trí phát hiện và dấu vết nguồn/đích liên quan nếu có.
-4. Lập luận ngắn gọn kèm tham chiếu đến tệp và dòng tương đối so với gốc kho lưu trữ.
-5. Danh tính hoặc bí danh ổn định của người chú thích, cùng dấu thời gian.
-6. Đối với `FP_CONFIRMED`, ít nhất một mã lý do.
-7. Đối với `TP_KNOWN`, ID mục/báo cáo VulnGym được liên kết trong phần siêu dữ liệu chỉ chứa nhãn và được ẩn khỏi bộ xác minh.
-
-Nhãn chính thức phải tuân theo `schemas/human-gold-label.schema.json`. Lệnh
-`vulngym-evaluate classify` mặc định kiểm tra đủ nhãn, reviewer loại `HUMAN`,
-timestamp có múi giờ, evidence, reason code và liên kết VulnGym bắt buộc. Cờ
-`--allow-incomplete-gold` chỉ dành cho fixture hoặc phân tích phát triển, không
-được dùng để tạo metric báo cáo.
-
-## Mã lý do cho kết quả dương tính giả
+## Mã lý do cho kết quả FP
 
 - `UNREACHABLE_CODE`
 - `NO_ATTACKER_CONTROL`
@@ -56,12 +28,25 @@ timestamp có múi giờ, evidence, reason code và liên kết VulnGym bắt bu
 
 ## Quy trình đánh giá
 
-1. Chuẩn hóa và loại bỏ kết quả trùng lặp trong đầu ra Semgrep.
+1. Chuẩn hóa và loại bỏ kết quả trùng lặp trong đầu ra scanner đang được đánh
+   giá. Với corpus hiện tại, scanner này là OpenGrep.
 2. Thử đối sánh nghiêm ngặt hoặc có độ tin cậy cao với các mục VulnGym đã biết.
 3. Thực hiện phân loại sơ bộ với sự hỗ trợ của tác nhân mà không cung cấp nhãn, nội dung cảnh báo bảo mật, quyền truy cập web hoặc bản vá đã sửa lỗi.
 4. Yêu cầu con người đánh giá mọi lỗ hổng mới có khả năng tồn tại, các trường hợp chưa chắc chắn và tập kiểm thử được niêm phong.
 5. Giải quyết bất đồng bằng một người thẩm định độc lập.
 6. Không đưa `UNCERTAIN` vào các chỉ số precision/recall/F1 chính.
+
+## Review có LLM hỗ trợ
+
+- Hai reviewer LLM phải chạy độc lập trên cùng đầu vào mù nhãn và không được đọc
+  kết quả của nhau.
+- Reviewer LLM không được là chính agent đang được đánh giá.
+- Đồng thuận độ tin cậy cao của hai LLM được ghi là `SILVER_CONSENSUS`, không ghi
+  thành `HUMAN` hoặc `human-gold-labels.jsonl`.
+- Con người phải xem mọi bất đồng, `ABSTAIN`, confidence thấp/trung bình, mọi TP
+  tiềm năng và một mẫu ngẫu nhiên từ các ca đồng thuận FP.
+- Metrics dùng nhãn kết hợp phải ghi rõ là exploratory. Metrics chính thức trên
+  tập 400 chỉ được mở khi đủ 400 nhãn con người hợp lệ.
 
 ## Kiểm soát rò rỉ
 
