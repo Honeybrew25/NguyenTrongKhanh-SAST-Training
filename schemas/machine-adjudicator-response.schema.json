@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/machine-adjudicator-response.schema.json",
+  "title": "Gemini adjudicator final response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "finding_id",
+    "verdict",
+    "confidence",
+    "reason_codes",
+    "reasoning",
+    "evidence",
+    "uncertainty_reason"
+  ],
+  "properties": {
+    "finding_id": {"type": "string", "minLength": 1},
+    "verdict": {
+      "enum": ["TRUE_POSITIVE", "FALSE_POSITIVE", "UNCERTAIN"]
+    },
+    "confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "UNREACHABLE_CODE",
+          "NO_ATTACKER_CONTROL",
+          "SANITIZED_BEFORE_SINK",
+          "CONSTANT_VALUE",
+          "AUTHZ_PRECONDITION_BLOCKS_ATTACK",
+          "SAFE_API_USAGE",
+          "TYPE_OR_SCHEMA_CONSTRAINT",
+          "TEST_OR_FIXTURE_ONLY",
+          "DEAD_OR_UNUSED_PATH",
+          "FRAMEWORK_GUARANTEE",
+          "SCANNER_MODELING_ERROR",
+          "OTHER_EXPLAINED"
+        ]
+      }
+    },
+    "reasoning": {"type": "string", "minLength": 1, "maxLength": 16000},
+    "evidence": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "line", "description", "code"],
+        "properties": {
+          "file": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "line": {
+            "anyOf": [
+              {"type": "integer", "minimum": 1},
+              {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*$"}
+            ]
+          },
+          "description": {"type": "string", "minLength": 1, "maxLength": 8000},
+          "code": {"type": "string"}
+        }
+      }
+    },
+    "uncertainty_reason": {"type": ["string", "null"], "maxLength": 8000}
+  }
+}

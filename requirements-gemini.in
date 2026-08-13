@@ -1,0 +1,3 @@
+# Gemini machine-review runtime; compile to requirements-gemini.lock with uv.
+google-genai>=2.13,<3
+jsonschema>=4.25,<5

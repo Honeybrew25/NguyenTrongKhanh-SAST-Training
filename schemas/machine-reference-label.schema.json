@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/machine-reference-label.schema.json",
+  "title": "Frozen LLM-adjudicated machine-reference label",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "label",
+    "confidence",
+    "reason_codes",
+    "reasoning",
+    "evidence",
+    "uncertainty_reason",
+    "reviewer",
+    "reviewed_at",
+    "provenance",
+    "linked_entry_ids"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "finding_id": {"type": "string", "minLength": 1},
+    "label": {
+      "enum": [
+        "MACHINE_TRUE_POSITIVE",
+        "MACHINE_FALSE_POSITIVE",
+        "MACHINE_UNCERTAIN"
+      ]
+    },
+    "confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "reasoning": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {"$ref": "#/$defs/evidence"}
+    },
+    "uncertainty_reason": {"type": ["string", "null"]},
+    "reviewer": {"$ref": "#/$defs/reviewer"},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "source_scanner",
+        "blind_first",
+        "route_reasons",
+        "reviewer_a_prediction_sha256",
+        "reviewer_b_prediction_sha256",
+        "adjudicator_blind_prediction_sha256",
+        "adjudicator_final_prediction_sha256"
+      ],
+      "properties": {
+        "method": {"const": "LLM_ADJUDICATED"},
+        "source_scanner": {"const": "opengrep"},
+        "blind_first": {"type": "boolean"},
+        "route_reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "reviewer_a_prediction_sha256": {"$ref": "#/$defs/sha256"},
+        "reviewer_b_prediction_sha256": {"$ref": "#/$defs/sha256"},
+        "adjudicator_blind_prediction_sha256": {
+          "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+        },
+        "adjudicator_final_prediction_sha256": {
+          "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+        }
+      }
+    },
+    "linked_entry_ids": {"type": "array", "maxItems": 0}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"label": {"const": "MACHINE_FALSE_POSITIVE"}},
+        "required": ["label"]
+      },
+      "then": {
+        "properties": {
+          "reason_codes": {"minItems": 1},
+          "evidence": {"minItems": 1},
+          "uncertainty_reason": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"label": {"const": "MACHINE_TRUE_POSITIVE"}},
+        "required": ["label"]
+      },
+      "then": {
+        "properties": {
+          "reason_codes": {"maxItems": 0},
+          "evidence": {"minItems": 1},
+          "uncertainty_reason": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"label": {"const": "MACHINE_UNCERTAIN"}},
+        "required": ["label"]
+      },
+      "then": {
+        "properties": {
+          "reason_codes": {"maxItems": 0},
+          "uncertainty_reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "description", "code"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "line": {
+          "anyOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*$"}
+          ]
+        },
+        "description": {"type": "string", "minLength": 1},
+        "code": {"type": "string", "minLength": 1}
+      }
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "provider",
+        "provider_version",
+        "model",
+        "model_version"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "provider_version": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "model_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "role",
+        "provider",
+        "provider_version",
+        "model",
+        "model_version",
+        "participants"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"const": "MODEL"},
+        "role": {"enum": ["CONSENSUS_A_B", "ADJUDICATOR_C"]},
+        "provider": {"type": "string", "minLength": 1},
+        "provider_version": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "model_version": {"type": "string", "minLength": 1},
+        "participants": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/participant"}
+        }
+      }
+    }
+  }
+}
