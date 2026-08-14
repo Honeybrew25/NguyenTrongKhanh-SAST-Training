@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/vulngym/machine-enriched-finding.schema.json",
+  "title": "Post-freeze OpenGrep finding with LLM-adjudicated machine reference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "finding_id", "finding", "machine_reference", "post_freeze_linkage", "features", "corpus_role"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "finding_id": {"type": "string", "pattern": "^finding-[0-9a-f]{64}$"},
+    "finding": {
+      "type": "object",
+      "required": ["finding_id", "canonical_finding_id", "repo_url", "commit", "scanner", "rule", "location"],
+      "properties": {
+        "finding_id": {"type": "string"},
+        "canonical_finding_id": {"type": "string"},
+        "repo_url": {"type": "string", "pattern": "^https://github\\.com/"},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "scanner": {"type": "object", "required": ["name", "version"], "properties": {"name": {"const": "opengrep"}, "version": {"type": "string"}}},
+        "rule": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}},
+        "location": {"type": "object", "required": ["file", "start_line"], "properties": {"file": {"type": "string"}, "start_line": {"type": "integer", "minimum": 1}}}
+      }
+    },
+    "machine_reference": {
+      "type": "object",
+      "required": ["finding_id", "label", "reviewer", "provenance"],
+      "properties": {
+        "finding_id": {"type": "string"},
+        "label": {"enum": ["MACHINE_TRUE_POSITIVE", "MACHINE_FALSE_POSITIVE", "MACHINE_UNCERTAIN"]},
+        "reviewer": {"type": "object", "required": ["kind"], "properties": {"kind": {"const": "MODEL"}}},
+        "provenance": {"type": "object", "required": ["method", "source_scanner"], "properties": {"method": {"const": "LLM_ADJUDICATED"}, "source_scanner": {"const": "opengrep"}}}
+      }
+    },
+    "post_freeze_linkage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "linked_after_verdict_freeze", "match_tier", "linked_entry_ids", "linked_report_ids", "candidate_matches"],
+      "properties": {
+        "status": {"enum": ["MACHINE_TP_LINKED", "MACHINE_TP_UNLINKED", "NOT_APPLICABLE"]},
+        "linked_after_verdict_freeze": {"const": true},
+        "match_tier": {"type": ["string", "null"]},
+        "linked_entry_ids": {"type": "array", "items": {"pattern": "^entry-[0-9]{5}$"}, "uniqueItems": true},
+        "linked_report_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "candidate_matches": {"type": "array"}
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "rule_id", "cwes", "language", "has_dataflow"],
+      "properties": {
+        "repository": {"type": "string"},
+        "rule_id": {"type": "string"},
+        "cwes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "language": {"type": "string"},
+        "has_dataflow": {"type": "boolean"}
+      }
+    },
+    "corpus_role": {"const": "PREVALENCE_400"}
+  }
+}

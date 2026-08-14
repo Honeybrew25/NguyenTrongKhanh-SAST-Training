@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "profile_id": "blind-source-review-local-v1",
-  "threat_model": "A true positive requires a concrete attacker capability, a reachable input or artifact, a security-relevant effect, and no effective validation, sanitization, authentication, authorization, type constraint, or framework guarantee that blocks exploitation. A dangerous API or suspicious syntax alone is insufficient. Failure to establish exploitability is not proof of a false positive; use ABSTAIN when evidence remains insufficient.",
+  "profile_id": "blind-snippet-only-baseline-v1",
+  "threat_model": "A true positive requires a concrete attacker capability, a reachable input or artifact, a security-relevant effect, and no effective blocking control. Use only the finding, snippet and initial bounded source excerpts. If those are insufficient, abstain.",
   "limits": {
-    "max_steps": 10,
-    "max_tool_calls_per_step": 4,
+    "max_steps": 1,
+    "max_tool_calls_per_step": 1,
     "max_context_chars": 80000,
     "max_read_lines": 180,
     "max_source_file_bytes": 2000000,

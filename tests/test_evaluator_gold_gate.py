@@ -36,7 +36,7 @@ def _prediction(finding_id: str, verdict: str = "TRUE_POSITIVE") -> dict:
     }
 
 
-def test_official_gold_gate_accepts_complete_human_labels() -> None:
+def test_official_reference_gate_accepts_complete_human_labels() -> None:
     labels = [
         _label("known", "TP_KNOWN"),
         _label("novel", "TP_NOVEL"),
@@ -47,11 +47,24 @@ def test_official_gold_gate_accepts_complete_human_labels() -> None:
     validate_official_classification_inputs(labels, predictions)
 
 
+def test_official_reference_gate_accepts_blind_independent_model_labels() -> None:
+    labels = [_label("model-reviewed", "FP_CONFIRMED")]
+    labels[0]["reviewer"] = {"id": "independent-model-a", "kind": "MODEL"}
+    labels[0]["verification"] = {
+        "method": "LLM_VERIFIED",
+        "blind": True,
+        "independent_from_candidate_generator": True,
+    }
+    validate_official_classification_inputs(
+        labels, [_prediction("model-reviewed", "FALSE_POSITIVE")]
+    )
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
         (lambda row: row.update(label=None), "incomplete or invalid gold label"),
-        (lambda row: row["reviewer"].update(kind="AI_TECHNICAL_REVIEW"), "human-reviewed"),
+        (lambda row: row["reviewer"].update(kind="AI_TECHNICAL_REVIEW"), "reviewer kind"),
         (lambda row: row.update(evidence=[]), "evidence is required"),
         (lambda row: row.update(reviewed_at="2026-08-06"), "include a timezone"),
     ],
@@ -60,6 +73,13 @@ def test_official_gold_gate_rejects_incomplete_review(mutation, message: str) ->
     row = _label("finding", "TP_NOVEL")
     mutation(row)
     with pytest.raises(ValueError, match=message):
+        validate_official_classification_inputs([row], [_prediction("finding")])
+
+
+def test_model_reference_requires_independent_blind_provenance() -> None:
+    row = _label("finding", "TP_NOVEL")
+    row["reviewer"] = {"id": "model-a", "kind": "MODEL"}
+    with pytest.raises(ValueError, match="blind independent verification"):
         validate_official_classification_inputs([row], [_prediction("finding")])
 
 

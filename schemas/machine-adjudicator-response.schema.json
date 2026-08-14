@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/vulngym/machine-adjudicator-response.schema.json",
-  "title": "Gemini adjudicator final response",
+  "title": "Machine adjudicator final response",
   "type": "object",
   "additionalProperties": false,
   "required": [

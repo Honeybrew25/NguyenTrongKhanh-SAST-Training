@@ -10,9 +10,16 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-.venv-wsl/bin/python}"
-SAMPLE_DIR="${SAMPLE_DIR:-artifacts/human-review/opengrep-representative-r1-20260812}"
-EVIDENCE_PACKETS="${EVIDENCE_PACKETS:-artifacts/hybrid-review/opengrep-representative-r1-20260812/evidence-packets.jsonl}"
-MACHINE_DIR="${MACHINE_DIR:-artifacts/llm-review/opengrep-representative-gemini-only-r5-20260813}"
+DEFAULT_MACHINE_DIR='artifacts/llm-review/opengrep-representative-openai-luna-r20-20260814'
+DEFAULT_BASE_MACHINE_DIR='artifacts/llm-review/opengrep-representative-openai-luna-r9-20260814'
+DEFAULT_R19_MACHINE_DIR='artifacts/llm-review/opengrep-representative-openai-luna-r19-20260814'
+DEFAULT_R7_MACHINE_DIR='artifacts/llm-review/opengrep-representative-gemini-only-r7-20260814'
+SAMPLE_DIR="${SAMPLE_DIR:-artifacts/llm-review/opengrep-representative-openai-luna-r20-20260814/frozen-inputs}"
+EVIDENCE_PACKETS="${EVIDENCE_PACKETS:-artifacts/llm-review/opengrep-representative-openai-luna-r20-20260814/frozen-inputs/evidence-packets.jsonl}"
+MACHINE_DIR="${MACHINE_DIR:-$DEFAULT_MACHINE_DIR}"
+BASE_MACHINE_DIR="${BASE_MACHINE_DIR:-$DEFAULT_BASE_MACHINE_DIR}"
+R19_MACHINE_DIR="${R19_MACHINE_DIR:-$DEFAULT_R19_MACHINE_DIR}"
+R7_MACHINE_DIR="${R7_MACHINE_DIR:-$DEFAULT_R7_MACHINE_DIR}"
 SNAPSHOT_ROOT="${SNAPSHOT_ROOT:-worktrees/opengrep-linux-lf}"
 PROFILE="${PROFILE:-config/verifier-profile-v1.json}"
 PROMPT="${PROMPT:-config/verifier-prompt-local-v1.md}"
@@ -31,7 +38,7 @@ REVIEWER_B_THINKING="${REVIEWER_B_THINKING:-minimal}"
 ADJUDICATOR_THINKING="${ADJUDICATOR_THINKING:-low}"
 REVIEWER_A_PROVIDER="${REVIEWER_A_PROVIDER:-gemini-api}"
 REVIEWER_B_PROVIDER="${REVIEWER_B_PROVIDER:-gemini-api}"
-ADJUDICATOR_PROVIDER="${ADJUDICATOR_PROVIDER:-gemini-api}"
+ADJUDICATOR_PROVIDER="${ADJUDICATOR_PROVIDER:-openai-api}"
 REVIEWER_A_BASE_URL="${REVIEWER_A_BASE_URL:-http://127.0.0.1:1234/v1}"
 REVIEWER_B_BASE_URL="${REVIEWER_B_BASE_URL:-http://127.0.0.1:1234/v1}"
 REVIEWER_A_MODEL_REVISION_SHA256="${REVIEWER_A_MODEL_REVISION_SHA256:-}"
@@ -47,7 +54,7 @@ GEMINI_MAX_RATE_LIMIT_WAIT_SECONDS="${GEMINI_MAX_RATE_LIMIT_WAIT_SECONDS:-90}"
 
 usage() {
   printf '%s\n' \
-    "Usage: bash scripts/opengrep_machine_review.sh <validate|reviewer-a|reviewer-b|reconcile|adjudicator-blind|adjudicator-finalize|status>" \
+    "Usage: bash scripts/opengrep_machine_review.sh <migrate-r20|validate|reconcile|adjudicator-blind|adjudicator-finalize|status>" \
     "" \
     "Required for validate and subsequent workflow commands:" \
     "  export REVIEWER_A_MODEL=<exact-model-id>" \
@@ -55,8 +62,8 @@ usage() {
     "  export ADJUDICATOR_MODEL=<exact-model-id>" \
     "  export EVALUATED_AGENT_MODEL=<exact-model-id>" \
     "For local A/B: set REVIEWER_{A,B}_PROVIDER=local-openai, BASE_URL, and MODEL_REVISION_SHA256." \
-    "Required only when a command calls Gemini adjudicator C:" \
-    "  export GEMINI_API_KEY=<secret>       # or GOOGLE_API_KEY, never both" \
+    "Required only when a command calls OpenAI adjudicator C:" \
+    "  export OPENAI_API_KEY=<secret>" \
     "" \
     "A, B, C, and the evaluated agent must all use different model IDs." \
     "See docs/opengrep-machine-review.md for gates and publication limits."
@@ -83,17 +90,30 @@ require_runtime() {
   require_file "$ADJUDICATOR_SCHEMA"
   [[ -d "$SNAPSHOT_ROOT" ]] || die "snapshot root is missing: $SNAPSHOT_ROOT"
   "$PYTHON_BIN" -c \
-    'import google.genai, jsonschema, vulngym_enrich.gemini_verifier_agent, vulngym_enrich.local_verifier_agent, vulngym_enrich.machine_review' \
+    'import google.genai, jsonschema, vulngym_enrich.gemini_verifier_agent, vulngym_enrich.openai_verifier_agent, vulngym_enrich.local_verifier_agent, vulngym_enrich.machine_review' \
     >/dev/null 2>&1 || die "Python dependencies/modules are unavailable; install the project environment first"
 }
 
-require_model_environment() {
-  : "${REVIEWER_A_MODEL:?Set REVIEWER_A_MODEL to an exact model ID}"
-  : "${REVIEWER_B_MODEL:?Set REVIEWER_B_MODEL to an exact model ID}"
-  : "${ADJUDICATOR_MODEL:?Set ADJUDICATOR_MODEL to an exact model ID}"
-  : "${EVALUATED_AGENT_MODEL:?Set EVALUATED_AGENT_MODEL to an exact model ID}"
+require_r20_paths() {
+  if [[ "$MACHINE_DIR" == "$DEFAULT_BASE_MACHINE_DIR" ]]; then
+    die "MACHINE_DIR still points to r9; run: unset MACHINE_DIR BASE_MACHINE_DIR R19_MACHINE_DIR R7_MACHINE_DIR"
+  fi
+  if [[ "$BASE_MACHINE_DIR" == 'artifacts/llm-review/opengrep-representative-openai-luna-r8-20260814' ]]; then
+    die "BASE_MACHINE_DIR still points to r8; run: unset MACHINE_DIR BASE_MACHINE_DIR R19_MACHINE_DIR R7_MACHINE_DIR"
+  fi
+  [[ "$MACHINE_DIR" != "$R19_MACHINE_DIR" ]] || \
+    die "MACHINE_DIR must differ from the r19 recovery source; unset MACHINE_DIR R19_MACHINE_DIR"
+}
 
-  [[ "$ADJUDICATOR_PROVIDER" == "gemini-api" ]] || die "adjudicator C must remain gemini-api"
+require_model_environment() {
+  REVIEWER_A_MODEL="${REVIEWER_A_MODEL:-gemini-3.1-flash-lite}"
+  REVIEWER_B_MODEL="${REVIEWER_B_MODEL:-gemini-3.5-flash-lite}"
+  ADJUDICATOR_MODEL="${ADJUDICATOR_MODEL:-gpt-5.6-luna}"
+  EVALUATED_AGENT_MODEL="${EVALUATED_AGENT_MODEL:-gpt-5.6-sol}"
+  export REVIEWER_A_MODEL REVIEWER_B_MODEL ADJUDICATOR_MODEL EVALUATED_AGENT_MODEL
+
+  [[ "$ADJUDICATOR_PROVIDER" == "openai-api" ]] || die "r20 adjudicator C must remain openai-api"
+  [[ "$ADJUDICATOR_MODEL" == "gpt-5.6-luna" ]] || die "r20 adjudicator C must use exact model gpt-5.6-luna"
   local provider
   for provider in "$REVIEWER_A_PROVIDER" "$REVIEWER_B_PROVIDER"; do
     [[ "$provider" == "local-openai" || "$provider" == "gemini-api" ]] || \
@@ -193,12 +213,7 @@ PY
 }
 
 require_api_credential() {
-  if [[ -n "${GEMINI_API_KEY:-}" && -n "${GOOGLE_API_KEY:-}" ]]; then
-    die "both GEMINI_API_KEY and GOOGLE_API_KEY are set; keep exactly one to avoid ambiguous credentials"
-  fi
-  if [[ -z "${GEMINI_API_KEY:-}" && -z "${GOOGLE_API_KEY:-}" ]]; then
-    die "Gemini API credential is missing; set GEMINI_API_KEY or GOOGLE_API_KEY"
-  fi
+  [[ -n "${OPENAI_API_KEY:-}" ]] || die "OpenAI API credential is missing; set OPENAI_API_KEY"
 }
 
 require_reviewer_credential() {
@@ -224,6 +239,7 @@ import json
 import sys
 from pathlib import Path
 from vulngym_enrich.local_verifier_agent import LOCAL_DIALECT_VERSION, LOCAL_PROVIDER_ID
+from vulngym_enrich.openai_verifier_agent import OPENAI_DIALECT_VERSION, OPENAI_PROVIDER_ID
 
 root = Path(sys.argv[1])
 gemini_sdk_version = importlib.metadata.version("google-genai")
@@ -236,13 +252,14 @@ roles = (
 )
 for identifier, role, provider_selector, model, thinking, seed, base_url, revision in roles:
     is_local = provider_selector == "local-openai"
+    is_openai = provider_selector == "openai-api"
     value = {
         "schema_version": 1,
         "id": identifier,
         "kind": "MODEL",
         "role": role,
-        "provider": LOCAL_PROVIDER_ID if is_local else "google-gemini-api-isolated-json",
-        "provider_version": LOCAL_DIALECT_VERSION if is_local else gemini_sdk_version,
+        "provider": LOCAL_PROVIDER_ID if is_local else (OPENAI_PROVIDER_ID if is_openai else "google-gemini-api-isolated-json"),
+        "provider_version": LOCAL_DIALECT_VERSION if is_local else (OPENAI_DIALECT_VERSION if is_openai else gemini_sdk_version),
         "model": model,
         "model_version": None,
         "thinking_level": "SERVER_DEFAULT" if is_local else thinking.upper(),
@@ -293,20 +310,57 @@ prepare_machine_review() {
 }
 
 ensure_prepared() {
+  if [[ -f "$MACHINE_DIR/machine-review-manifest.json" ]]; then
+    return
+  fi
   with_identity_configs prepare_machine_review
+}
+
+ensure_migrated() {
+  ensure_prepared
+  "$PYTHON_BIN" -m vulngym_enrich.machine_review migrate-r8 \
+    --base-review-dir "$R7_MACHINE_DIR" \
+    --review-dir "$MACHINE_DIR"
+  "$PYTHON_BIN" -m vulngym_enrich.machine_review migrate-r10 \
+    --base-review-dir "$BASE_MACHINE_DIR" \
+    --review-dir "$MACHINE_DIR"
+  "$PYTHON_BIN" -m vulngym_enrich.machine_review migrate-r20 \
+    --base-review-dir "$R19_MACHINE_DIR" \
+    --review-dir "$MACHINE_DIR"
 }
 
 validate_blind_input() {
   local role="$1"
   local model="$2"
+  local input="$MACHINE_DIR/reviewer-$role/blind-input.jsonl"
+  if [[ -f "$MACHINE_DIR/migration-r7.json" || -f "$MACHINE_DIR/migration-r6.json" ]]; then
+    input="$MACHINE_DIR/reviewer-$role/retry-input.jsonl"
+  fi
   "$PYTHON_BIN" -m vulngym_enrich.gemini_verifier_agent \
-    --input "$MACHINE_DIR/reviewer-$role/blind-input.jsonl" \
+    --input "$input" \
     --snapshot-root "$SNAPSHOT_ROOT" \
     --run-dir "$MACHINE_DIR/validation/reviewer-$role" \
     --profile "$PROFILE" \
     --prompt "$PROMPT" \
     --response-schema "$RESPONSE_SCHEMA" \
     --model "$model" \
+    --development-run \
+    --validate-only
+}
+
+validate_adjudicator_input() {
+  local input="$MACHINE_DIR/adjudicator-c/blind-input.jsonl"
+  if [[ -f "$MACHINE_DIR/migration-r9.json" ]]; then
+    input="$MACHINE_DIR/adjudicator-c/retry-input.jsonl"
+  fi
+  "$PYTHON_BIN" -m vulngym_enrich.openai_verifier_agent \
+    --input "$input" \
+    --snapshot-root "$SNAPSHOT_ROOT" \
+    --run-dir "$MACHINE_DIR/validation/adjudicator-c" \
+    --profile "$PROFILE" \
+    --prompt "$PROMPT" \
+    --response-schema "$RESPONSE_SCHEMA" \
+    --model "$ADJUDICATOR_MODEL" \
     --development-run \
     --validate-only
 }
@@ -319,11 +373,17 @@ run_blind_reviewer() {
   local provider="$5"
   local base_url="$6"
   local revision="$7"
+  local input="$MACHINE_DIR/reviewer-$role/blind-input.jsonl"
+  local run_dir="$MACHINE_DIR/reviewer-$role/run"
+  if [[ -f "$MACHINE_DIR/migration-r7.json" || -f "$MACHINE_DIR/migration-r6.json" ]]; then
+    input="$MACHINE_DIR/reviewer-$role/retry-input.jsonl"
+    run_dir="$MACHINE_DIR/reviewer-$role/retry-run"
+  fi
   if [[ "$provider" == "local-openai" ]]; then
     "$PYTHON_BIN" -m vulngym_enrich.local_verifier_agent \
-      --input "$MACHINE_DIR/reviewer-$role/blind-input.jsonl" \
+      --input "$input" \
       --snapshot-root "$SNAPSHOT_ROOT" \
-      --run-dir "$MACHINE_DIR/reviewer-$role/run" \
+      --run-dir "$run_dir" \
       --profile "$PROFILE" \
       --prompt "$PROMPT" \
       --response-schema "$RESPONSE_SCHEMA" \
@@ -337,9 +397,9 @@ run_blind_reviewer() {
     return
   fi
   "$PYTHON_BIN" -m vulngym_enrich.gemini_verifier_agent \
-    --input "$MACHINE_DIR/reviewer-$role/blind-input.jsonl" \
+    --input "$input" \
     --snapshot-root "$SNAPSHOT_ROOT" \
-    --run-dir "$MACHINE_DIR/reviewer-$role/run" \
+    --run-dir "$run_dir" \
     --profile "$PROFILE" \
     --prompt "$PROMPT" \
     --response-schema "$RESPONSE_SCHEMA" \
@@ -355,73 +415,64 @@ run_blind_reviewer() {
 }
 
 run_adjudicator_blind() {
-  "$PYTHON_BIN" -m vulngym_enrich.gemini_verifier_agent \
-    --input "$MACHINE_DIR/adjudicator-c/blind-input.jsonl" \
+  local input="$MACHINE_DIR/adjudicator-c/blind-input.jsonl"
+  local run_dir="$MACHINE_DIR/adjudicator-c/blind"
+  if [[ -f "$MACHINE_DIR/migration-r9.json" ]]; then
+    input="$MACHINE_DIR/adjudicator-c/retry-input.jsonl"
+    run_dir="$MACHINE_DIR/adjudicator-c/retry-run"
+  fi
+  "$PYTHON_BIN" -m vulngym_enrich.openai_verifier_agent \
+    --input "$input" \
     --snapshot-root "$SNAPSHOT_ROOT" \
-    --run-dir "$MACHINE_DIR/adjudicator-c/blind" \
+    --run-dir "$run_dir" \
     --profile "$PROFILE" \
     --prompt "$PROMPT" \
     --response-schema "$RESPONSE_SCHEMA" \
-    --provider gemini-api \
     --model "$ADJUDICATOR_MODEL" \
-    --gemini-thinking-level "$ADJUDICATOR_THINKING" \
-    --seed "$ADJUDICATOR_SEED" \
-    --temperature "$GEMINI_TEMPERATURE" \
-    --gemini-min-request-interval-seconds "$GEMINI_MIN_REQUEST_INTERVAL_SECONDS" \
-    --gemini-rate-limit-retry-delay-seconds "$GEMINI_RATE_LIMIT_RETRY_DELAY_SECONDS" \
-    --gemini-max-rate-limit-wait-seconds "$GEMINI_MAX_RATE_LIMIT_WAIT_SECONDS" \
+    --reasoning-effort "$ADJUDICATOR_THINKING" \
     --development-run
 }
 
 command="${1:-}"
 case "$command" in
+  migrate-r20)
+    require_runtime
+    require_r20_paths
+    require_model_environment
+    ensure_migrated
+    ;;
   validate)
     require_runtime
+    require_r20_paths
     require_model_environment
-    ensure_prepared
-    validate_blind_input a "$REVIEWER_A_MODEL"
-    validate_blind_input b "$REVIEWER_B_MODEL"
+    ensure_migrated
+    validate_adjudicator_input
     ;;
   reviewer-a)
-    require_runtime
-    require_model_environment
-    require_reviewer_credential "$REVIEWER_A_PROVIDER"
-    ensure_prepared
-    run_blind_reviewer a "$REVIEWER_A_MODEL" "$REVIEWER_A_THINKING" "$REVIEWER_A_SEED" \
-      "$REVIEWER_A_PROVIDER" "$REVIEWER_A_BASE_URL" "$REVIEWER_A_MODEL_REVISION_SHA256"
+    die "r20 imports reviewer A 400/400 from r7; no reviewer-a API run is allowed"
     ;;
   reviewer-b)
-    require_runtime
-    require_model_environment
-    require_reviewer_credential "$REVIEWER_B_PROVIDER"
-    ensure_prepared
-    run_blind_reviewer b "$REVIEWER_B_MODEL" "$REVIEWER_B_THINKING" "$REVIEWER_B_SEED" \
-      "$REVIEWER_B_PROVIDER" "$REVIEWER_B_BASE_URL" "$REVIEWER_B_MODEL_REVISION_SHA256"
+    die "r20 imports reviewer B 400/400 from r7; no reviewer-b API run is allowed"
     ;;
   reconcile)
     require_runtime
+    require_r20_paths
     require_model_environment
-    ensure_prepared
+    ensure_migrated
     "$PYTHON_BIN" -m vulngym_enrich.machine_review reconcile \
       --review-dir "$MACHINE_DIR" \
       --reviewer-a-run "$MACHINE_DIR/reviewer-a/run" \
       --reviewer-b-run "$MACHINE_DIR/reviewer-b/run"
     ;;
   adjudicator-blind)
-    require_runtime
-    require_model_environment
-    require_api_credential
-    ensure_prepared
-    run_adjudicator_blind
-    "$PYTHON_BIN" -m vulngym_enrich.machine_review prepare-adjudication \
-      --review-dir "$MACHINE_DIR" \
-      --blind-run "$MACHINE_DIR/adjudicator-c/blind"
+    die "r20 imports adjudicator blind 112/112 from r9; run adjudicator-finalize"
     ;;
   adjudicator-finalize)
     require_runtime
+    require_r20_paths
     require_model_environment
     require_api_credential
-    ensure_prepared
+    ensure_migrated
     "$PYTHON_BIN" -m vulngym_enrich.machine_review adjudicate \
       --review-dir "$MACHINE_DIR" \
       --prompt "$ADJUDICATOR_PROMPT" \
@@ -435,6 +486,7 @@ case "$command" in
     ;;
   status)
     [[ -x "$PYTHON_BIN" ]] || die "Python is not executable: $PYTHON_BIN"
+    require_r20_paths
     "$PYTHON_BIN" -m vulngym_enrich.machine_review status --review-dir "$MACHINE_DIR"
     ;;
   *)

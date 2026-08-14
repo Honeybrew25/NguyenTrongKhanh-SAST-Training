@@ -1,133 +1,92 @@
-# VulnGym Semgrep Verifier và OpenGrep Baseline
+# VulnGym OpenGrep Machine-Reference Baseline
 
-Project quét 166 source snapshot của Tencent VulnGym, chuẩn hóa/deduplicate
-finding và tạo corpus mù cho agent đọc source tại đúng commit. Release Semgrep
-v5 đã hoàn tất agent + human review + metrics; release OpenGrep r1 đã hoàn tất
-full scan + normalize + annotation queue + frozen verifier corpus.
+Project quét 166 source snapshot của Tencent VulnGym bằng OpenGrep, chuẩn hóa và
+gộp trùng finding, tạo prevalence sample 400 record, review mù bằng nhiều LLM và
+đánh giá ba baseline trên split theo repository.
 
-Finding chưa được xác minh luôn là candidate, không mặc định là false positive.
+Release active là OpenGrep machine-only. Reference do Gemini A/B và GPT-5.6
+Luna C tạo, vì vậy kết quả là `LLM_ADJUDICATED_MACHINE_REFERENCE`, **không phải
+human gold**. Theo policy hiện tại, các số đo được công bố là **project-approved
+machine-reference metrics**: chính thức trong phạm vi project nhưng không phải
+universal ground truth hay kết quả do người xác minh.
 
-## Kết quả Semgrep v5
+Người mới có thể xem [chú giải thuật ngữ](docs/thuat-ngu-bao-cao.md) trước khi
+đọc bảng kết quả và các báo cáo theo ngày.
 
-Release v5 đã hoàn tất toàn bộ workflow: 16/16 prediction thành công, prediction
-đã khóa, evaluator đã chấp nhận đủ 16 gold-label record và sinh metrics. Nhãn
-tham chiếu gồm 14 `TP_KNOWN`, 1 `FP_CONFIRMED` và 1 `UNCERTAIN`.
+## Trạng thái hiện tại
 
-Trên 9 case mà agent đưa ra quyết định và gold label đủ điều kiện, kết quả là
-TP=3, FP=0, TN=1, FN=5: precision **1,0000**, recall **0,3750** và F1
-**0,5455**. Agent abstain 6/15 case được đánh giá, nên selective coverage là
-**0,6000**. Một case `UNCERTAIN` được báo cáo riêng và không đưa vào ma trận.
+- OpenGrep 1.22.0: 166/166 job thành công.
+- 113.756 finding, 112.739 canonical cluster, 129 rule trên 23 repository.
+- Prevalence sample: 400 record thuộc 16 repository.
+- Machine reference r20: 400/400 gồm 7 TP máy, 367 FP máy, 26 UNCERTAIN.
+- Enriched dataset: 400 OpenGrep-only record.
+- Post-freeze linkage: 7/7 TP là `MACHINE_TP_UNLINKED`; không diễn giải là
+  novelty.
+- Balanced benchmark: train=6, validation=4, test=4; repository/finding
+  overlap=0.
+- Ba baseline: hoàn tất trên cùng test set, mỗi run 4/4 success.
 
-## Kết quả OpenGrep r1
+## Kết quả baseline
 
-Full scan OpenGrep `1.22.0` trên Ubuntu WSL2/ext4 đã hoàn thành **166/166 job
-SUCCESS**. Pipeline ghi nhận 113.756 finding, 112.739 canonical cluster, 14
-`CANDIDATE_REVIEW` và 112.725 `UNMATCHED`. Corpus mù 14 record đã được đóng băng
-với SHA-256
-`7abb5bd8064a00fe4da18f16f1c4a2b6e8fc2d31d7b886fea5c9c14e6cc5bc7a`.
+| Baseline | TP/FP/TN/FN | Precision | TP retention | F1 | Coverage |
+|---|---|---:|---:|---:|---:|
+| Raw OpenGrep | 2/2/0/0 | 0,5000 | 1,0000 | 0,6667 | 1,0000 |
+| GPT-5.6 Luna snippet-only | 0/0/2/0 + 2 abstain TP | N/A | 0,0000 | N/A | 0,5000 |
+| GPT-5.6 Luna repository-context | 1/0/2/1 | 1,0000 | 0,5000 | 0,6667 | 1,0000 |
 
-14 candidate OpenGrep đều trùng khóa ngữ nghĩa với candidate đã review của
-Semgrep: 12 `TP_KNOWN`, 1 `FP_CONFIRMED`, 1 `UNCERTAIN`. Đây chỉ là phép kiểm
-tra retention trên corpus cũ, không phải gold label hay precision/recall/F1
-của OpenGrep. Hai `TP_KNOWN` Semgrep thuộc rule `detect-child-process` không
-xuất hiện trong queue OpenGrep và được ghi rõ trong release manifest.
+Test chỉ có 4 record của một repository và Luna cũng là adjudicator C, nên bảng
+này dùng để kiểm tra workflow/so sánh hành vi, không đủ cho kết luận tổng quát
+ngoài phạm vi machine reference r20. Chi tiết ở
+[báo cáo 14/08/2026](reports/report-14-08-2026.md).
 
-## Yêu cầu
+## Cài đặt và kiểm thử
 
-- Git, Python 3.11+, `uv` và Codex CLI đã đăng nhập.
-- Agent workflow trên Windows dùng PowerShell 7. OpenGrep trên Ubuntu WSL2 dùng
-  Bash và không cần `pwsh`.
-- Lượt chính thức phải theo đúng thứ tự `Doctor → Validate → Run → Freeze →
-  PrepareHumanReview → Evaluate`.
+Ubuntu WSL2, Python 3.11+ và `uv`:
 
-## 1. Cài đặt và kiểm thử
-
-Windows — PowerShell:
-
-```powershell
+```bash
 git submodule update --init --recursive
-uv sync --extra dev
-$env:PYTHONUTF8 = "1"
-uv run pytest -q
+UV_PROJECT_ENVIRONMENT=.venv-wsl uv sync --extra dev
+.venv-wsl/bin/python -m pytest -q
 ```
 
-OpenGrep trên Ubuntu WSL2 dùng workflow độc lập, không thay đổi release Semgrep
-v5 hiện tại:
+## Artifact và cách tái lập
+
+- Raw/normalized OpenGrep r2: `artifacts/scans/` và `artifacts/normalized/`.
+- Machine reference r20: `artifacts/llm-review/opengrep-representative-openai-luna-r20-20260814/`;
+  cần giữ lineage r7, r9 và r19 để validator kiểm chứng provenance.
+- Dataset/manifest: `data/enriched/opengrep-machine-reviewed-r1.jsonl` và
+  `data/releases/opengrep-machine-reviewed-r1-20260814.json`.
+- Quyết định công bố:
+  `data/releases/opengrep-machine-reference-publication-r1-20260814.json`.
+- Split, prediction và frozen metrics:
+  `data/splits/opengrep-machine-benchmark-r1-20260814/`; raw baseline run nằm
+  trong `artifacts/baselines/`.
+
+Các lệnh dưới đây kiểm tra và tái tạo artifact dẫn xuất mà không gọi API:
 
 ```bash
-cd ~/projects/NguyenTrongKhanh-SAST-Training-opengrep
-bash scripts/opengrep_scan_wsl.sh setup
+bash scripts/opengrep_scan_wsl.sh build-security-rules
 bash scripts/opengrep_scan_wsl.sh doctor
-bash scripts/opengrep_scan_wsl.sh smoke
+bash scripts/opengrep_scan_wsl.sh status
+
+unset MACHINE_DIR BASE_MACHINE_DIR R20_MACHINE_DIR R19_MACHINE_DIR R18_MACHINE_DIR
+bash scripts/opengrep_machine_review.sh status
+bash scripts/opengrep_machine_dataset.sh build
+bash scripts/opengrep_machine_dataset.sh evaluate
+bash scripts/opengrep_machine_dataset.sh status
 ```
 
-Project và toàn bộ cache/worktree OpenGrep phải nằm trên filesystem Linux của
-WSL (ext4), không đặt dưới `/mnt/c` hoặc `/mnt/d`. Full run mặc định dùng ruleset
-security-only, prefetch 4 repository song song và quét 2 snapshot song song × 3
-worker OpenGrep. Chạy `bash scripts/opengrep_scan_wsl.sh benchmark` nếu muốn đo
-lại mức `jobs=4/6/8` trên máy hiện tại.
+Gate r20 phải có A/B=400/400, C=112/112 và
+`MACHINE_REFERENCE_READY_WITH_UNCERTAINTY`. Muốn chạy lại baseline LLM, dùng
+action `snippet` hoặc `context`; runner chỉ retry case failed. Không đổi model,
+prompt, split hoặc reference trong cùng release. Chi tiết provenance nằm trong
+[runbook machine review](docs/opengrep-machine-review.md); tiến độ nằm tại
+[TODO active](docs/todo). Điều kiện công bố nằm trong
+[machine-reference publication policy](docs/machine-reference-publication-policy.md).
 
-Xem [hướng dẫn OpenGrep WSL](docs/opengrep-wsl.md) trước khi chạy full batch.
-
-Project đã dừng và loại bỏ baseline CodeQL ngày 13/08/2026 sau hai lần timeout
-trên OpenClaw. Kết quả SAST đang sử dụng cho project và báo cáo đánh giá là
-OpenGrep r1; dữ liệu CodeQL dở dang không được dùng làm finding, ground truth
-hoặc metrics. Quyết định và bằng chứng retirement được lưu tại
-[báo cáo bàn giao cho mentor](reports/opengrep-only-retirement-20260813.md).
-
-Để tái tạo queue và corpus OpenGrep từ normalized output đã hoàn chỉnh:
-
-```bash
-uv run vulngym-opengrep-release \
-  --normalized-dir artifacts/normalized/opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812-opengrep-only \
-  --queue-dir artifacts/annotation-queue/opengrep-v1.22.0-security-r1-20260812 \
-  --corpus-dir artifacts/verifier-corpora/opengrep-security-r1-20260812 \
-  --corpus-id opengrep-security-r1-20260812 \
-  --created-at 2026-08-12T13:22:57+07:00
-```
-
-Lệnh fail-closed nếu coverage không đủ, có job khác `SUCCESS`, input không phải
-OpenGrep-only, candidate count lệch hoặc policy vô tình gán `UNMATCHED` thành
-false positive.
-
-## 2. Chạy agent chính thức v5
-
-Windows — PowerShell:
-
-```powershell
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action Doctor
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action Validate
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action Status
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action Run
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action Freeze
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action PrepareHumanReview
-.\scripts\semgrep_verifier_agent_v5.ps1 -Action Evaluate
-```
-
-Chỉ chạy `Run` khi `Doctor` báo `ProviderIdentityMatches=True` và `Validate` báo
-`VALID`. Nếu bị gián đoạn, gọi lại `Run`; runner tái sử dụng case `SUCCESS` có
-identity đúng và chỉ retry case lỗi.
-
-Sau `PrepareHumanReview`, giao gói source-only cho một người thẩm định không xem
-prediction. Người đó điền đủ 16 nhãn có lý do và bằng chứng `file:dòng` vào
-`human-gold-labels.jsonl`. `Evaluate` sẽ dừng nếu thiếu prediction đã khóa, thiếu
-nhãn, reviewer không phải người thật hoặc evidence không hợp lệ.
-
-## 3. Dữ liệu chính
-
-- Corpus mù: `artifacts/verifier-corpora/semgrep-day2-v1-20260806/`
-- Run v5: `artifacts/verifier-runs/semgrep-agent-v5-20260807/`
-- Gói thẩm định: `artifacts/human-review/semgrep-agent-v5-20260807/`
-- Metrics: `artifacts/human-review/semgrep-agent-v5-20260807/metrics.json`
-- Dataset FP làm giàu: `data/enriched/day2-semgrep-reviewed.jsonl`
-- Source snapshot: `worktrees/`
-- Release ghim: `config/semgrep-verifier-agent-v5.json`
-- OpenGrep normalized: `artifacts/normalized/opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812-opengrep-only/`
-- OpenGrep queue: `artifacts/annotation-queue/opengrep-v1.22.0-security-r1-20260812/`
-- OpenGrep verifier corpus: `artifacts/verifier-corpora/opengrep-security-r1-20260812/`
-- OpenGrep release manifest: `data/releases/opengrep-security-r1-20260812.json`
-
-Xem [quickstart v5](docs/semgrep-verifier-agent-v5.md), [thiết kế
-agent](docs/verifier-agent.md), [quy tắc gán nhãn](docs/annotation-guideline.md)
-và hai báo cáo tổng kết [Semgrep](reports/final-semgrep-project-20260807.md),
-[OpenGrep](reports/final-opengrep-project-20260812.md).
+Các scan, dataset, cấu hình và script thực thi Semgrep/CodeQL cũ đã được loại
+khỏi workspace; mặc định CLI hiện là OpenGrep security-only. Parser tương thích
+định dạng Semgrep vẫn được giữ vì OpenGrep xuất định dạng này. Submodule
+`rules/semgrep-rules` cũng phải giữ vì nó là nguồn rule được pin để build
+ruleset security-only cho OpenGrep; đây không phải scanner Semgrep hay nguồn
+nhãn.

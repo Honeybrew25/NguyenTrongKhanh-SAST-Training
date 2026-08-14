@@ -1,0 +1,52 @@
+TODO active — OpenGrep machine-only — 14/08/2026
+
+Phương pháp đánh giá
+- Nhãn tham chiếu là `LLM_ADJUDICATED_MACHINE_REFERENCE` do LLM tạo, không phải
+  nhãn chuẩn do người độc lập xác minh (`human gold`).
+- Chỉ số r20 được project chấp thuận công bố trong phạm vi machine reference;
+  không diễn giải thành universal ground truth hoặc kết quả do người xác minh.
+- Human review là tùy chọn, không phải điều kiện công bố. Gate bắt buộc là hai
+  reviewer LLM mù độc lập, adjudicator mù-trước, evidence và provenance đã khóa.
+- `UNCERTAIN` là chưa đủ bằng chứng và phải giữ riêng; chỉ đối sánh với VulnGym
+  sau khi kết luận đã được khóa.
+
+Chuỗi bước bắt buộc đã hoàn thành
+- [x] OpenGrep 1.22.0 quét đủ 166/166 phiên bản mã nguồn (`snapshot`).
+- [x] Chuẩn hóa và gộp trùng: 113.756 cảnh báo (`finding`), còn 112.739 nhóm
+  cảnh báo duy nhất (`canonical cluster`).
+- [x] Mẫu đại diện 400 bản ghi đã được khóa để không thay đổi âm thầm.
+- [x] Gemini A/B 400/400; GPT-5.6 Luna C blind/final 112/112.
+- [x] Machine reference r20: 7 TP, 367 FP, 26 UNCERTAIN.
+- [x] Dataset OpenGrep đã bổ sung nhãn đủ 400 bản ghi.
+- [x] Sau khi khóa nhãn, 7 TP máy không liên kết được với entry VulnGym
+  (`MACHINE_TP_UNLINKED`); không tuyên bố đây là lỗ hổng mới.
+- [x] Chia tập theo repository: train=6, validation=4, test=4; không trùng dữ
+  liệu giữa các tập.
+- [x] Ba phương án đối chiếu chạy cùng tập kiểm thử và chỉ số đã được khóa.
+- [x] Dọn CodeQL và các scanner/dataset/script Semgrep cùng artifact đã bị thay
+  thế.
+- [x] Giữ đúng chuỗi nguồn gốc tối thiểu r7/r9/r19/r20 để r20 còn xác minh được.
+- [x] Tái tạo ruleset, kiểm tra trạng thái quét, dataset/đánh giá và 194 test đều
+  đạt.
+
+File kết quả đang dùng phải giữ
+- artifacts/scans/opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812
+- artifacts/normalized/opengrep-v1.22.0-vulngym-v0.1.4-security-wsl-ext4-r2-20260812-opengrep-only
+- artifacts/llm-review/opengrep-representative-gemini-only-r7-20260814
+- artifacts/llm-review/opengrep-representative-openai-luna-r9-20260814
+- artifacts/llm-review/opengrep-representative-openai-luna-r19-20260814
+- artifacts/llm-review/opengrep-representative-openai-luna-r20-20260814
+- artifacts/baselines/opengrep-machine-benchmark-r1-20260814
+- data/enriched/opengrep-machine-reviewed-r1.jsonl
+- data/splits/opengrep-machine-benchmark-r1-20260814
+
+Việc tiếp theo nếu mở rộng project
+- [ ] Mở rộng tập cảnh báo được máy gán TP trước khi tối ưu agent.
+- [ ] Tạo release và tập chia mới; không điều chỉnh hệ thống dựa trên 4 bản ghi
+  kiểm thử hiện tại.
+
+Chú giải: docs/thuat-ngu-bao-cao.md
+
+Runbook: docs/opengrep-machine-review.md
+Publication policy: docs/machine-reference-publication-policy.md
+Report: reports/report-14-08-2026.md

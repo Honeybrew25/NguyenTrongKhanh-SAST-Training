@@ -259,7 +259,11 @@ def _rules_root_from_profile(profile_path: Path, configured_root: str) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a deterministic inventory of applicable pinned rules.")
-    parser.add_argument("--profile", type=Path, default=Path("config/scan-profile.json"))
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        default=Path("config/scan-profile.opengrep-security-wsl-fast.json"),
+    )
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)

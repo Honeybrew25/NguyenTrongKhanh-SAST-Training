@@ -7,7 +7,8 @@
 
 ## Kết luận
 
-Baseline CodeQL không đạt coverage hoàn chỉnh trong ngân sách thời gian và tài
+Phương án đối chiếu CodeQL (`baseline`) không hoàn tất đủ số job cần quét
+(`coverage`) trong ngân sách thời gian và tài
 nguyên của máy thử nghiệm. Cùng job OpenClaw commit
 `041c47419f5a821fd4adcd46dfc7d85a7eda340e`, ngôn ngữ
 JavaScript/TypeScript, đã timeout hai lần dù lần hai tái sử dụng database và
@@ -51,7 +52,8 @@ không phải kết quả scan và không được đưa vào thống kê.
 ## Phân tích nguyên nhân
 
 Nguyên nhân tính toán gốc là sự mở rộng rất lớn của quan hệ trung gian trong các
-query taint/data-flow liên thủ tục, nổi bật là `CommandInjection`,
+truy vấn theo dõi đường đi của dữ liệu không tin cậy qua nhiều hàm
+(`taint/data-flow` liên thủ tục), nổi bật là `CommandInjection`,
 `IndirectCommandInjection` và `ShellCommandInjectionFromEnvironment`. Log
 evaluator cho thấy fixed-point đã tới khoảng 205–334 vòng lặp nhưng mỗi delta
 vẫn sinh khoảng 1,0–2,6 triệu dòng.

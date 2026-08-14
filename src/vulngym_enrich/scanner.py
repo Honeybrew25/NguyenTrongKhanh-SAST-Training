@@ -26,7 +26,7 @@ from .checkout import (
 )
 
 SUPPORTED_SCANNERS = ("semgrep", "opengrep")
-DEFAULT_SCANNERS = ("semgrep",)
+DEFAULT_SCANNERS = ("opengrep",)
 
 _RETRY_POLICY_SCHEMA_VERSION = 1
 _MAX_COMPLETED_TIMEOUT_ATTEMPTS = 2
@@ -2124,8 +2124,16 @@ def main(argv: list[str] | None = None) -> int:
         description="Run pinned Semgrep-compatible scanner jobs over exact VulnGym snapshots."
     )
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--scanner-lock", type=Path, default=Path("config/scanners.lock.json"))
-    parser.add_argument("--scan-profile", type=Path, default=Path("config/scan-profile.json"))
+    parser.add_argument(
+        "--scanner-lock",
+        type=Path,
+        default=Path("config/scanners.opengrep-security-wsl.lock.json"),
+    )
+    parser.add_argument(
+        "--scan-profile",
+        type=Path,
+        default=Path("config/scan-profile.opengrep-security-wsl-fast.json"),
+    )
     parser.add_argument("--scan-id", required=True)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--cache-root", type=Path, default=Path("cache"))

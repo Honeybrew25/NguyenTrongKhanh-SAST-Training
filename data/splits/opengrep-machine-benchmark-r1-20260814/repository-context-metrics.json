@@ -1,0 +1,254 @@
+{
+  "baseline_id": "gpt-5.6-luna-repository-context",
+  "breakdowns": {
+    "cwe": {
+      "CWE-319": {
+        "confusion_matrix_decided_only": {
+          "fn": 1,
+          "fp": 0,
+          "tn": 2,
+          "tp": 1
+        },
+        "coverage": {
+          "abstain_on_machine_false": 0,
+          "abstain_on_machine_true": 0,
+          "agent_abstained": 0,
+          "agent_decided": 4,
+          "machine_reference_decided_total": 4,
+          "selective_coverage": 1.0
+        },
+        "metrics_decided_only": {
+          "accuracy": 0.75,
+          "f1": 0.6666666666666666,
+          "false_negative_rate": 0.5,
+          "false_positive_rate": 0.0,
+          "precision": 1.0,
+          "recall_tp_retention": 0.5,
+          "specificity": 1.0
+        },
+        "metrics_end_to_end": {
+          "false_positive_removal_rate": 1.0,
+          "tp_retention": 0.5
+        },
+        "records": 4
+      }
+    },
+    "dataflow": {
+      "without_trace": {
+        "confusion_matrix_decided_only": {
+          "fn": 1,
+          "fp": 0,
+          "tn": 2,
+          "tp": 1
+        },
+        "coverage": {
+          "abstain_on_machine_false": 0,
+          "abstain_on_machine_true": 0,
+          "agent_abstained": 0,
+          "agent_decided": 4,
+          "machine_reference_decided_total": 4,
+          "selective_coverage": 1.0
+        },
+        "metrics_decided_only": {
+          "accuracy": 0.75,
+          "f1": 0.6666666666666666,
+          "false_negative_rate": 0.5,
+          "false_positive_rate": 0.0,
+          "precision": 1.0,
+          "recall_tp_retention": 0.5,
+          "specificity": 1.0
+        },
+        "metrics_end_to_end": {
+          "false_positive_removal_rate": 1.0,
+          "tp_retention": 0.5
+        },
+        "records": 4
+      }
+    },
+    "language": {
+      "md": {
+        "confusion_matrix_decided_only": {
+          "fn": 1,
+          "fp": 0,
+          "tn": 1,
+          "tp": 0
+        },
+        "coverage": {
+          "abstain_on_machine_false": 0,
+          "abstain_on_machine_true": 0,
+          "agent_abstained": 0,
+          "agent_decided": 2,
+          "machine_reference_decided_total": 2,
+          "selective_coverage": 1.0
+        },
+        "metrics_decided_only": {
+          "accuracy": 0.5,
+          "f1": null,
+          "false_negative_rate": 1.0,
+          "false_positive_rate": 0.0,
+          "precision": null,
+          "recall_tp_retention": 0.0,
+          "specificity": 1.0
+        },
+        "metrics_end_to_end": {
+          "false_positive_removal_rate": 1.0,
+          "tp_retention": 0.0
+        },
+        "records": 2
+      },
+      "typescript": {
+        "confusion_matrix_decided_only": {
+          "fn": 0,
+          "fp": 0,
+          "tn": 1,
+          "tp": 1
+        },
+        "coverage": {
+          "abstain_on_machine_false": 0,
+          "abstain_on_machine_true": 0,
+          "agent_abstained": 0,
+          "agent_decided": 2,
+          "machine_reference_decided_total": 2,
+          "selective_coverage": 1.0
+        },
+        "metrics_decided_only": {
+          "accuracy": 1.0,
+          "f1": 1.0,
+          "false_negative_rate": 0.0,
+          "false_positive_rate": 0.0,
+          "precision": 1.0,
+          "recall_tp_retention": 1.0,
+          "specificity": 1.0
+        },
+        "metrics_end_to_end": {
+          "false_positive_removal_rate": 1.0,
+          "tp_retention": 1.0
+        },
+        "records": 2
+      }
+    },
+    "repository": {
+      "https://github.com/openclaw/openclaw": {
+        "confusion_matrix_decided_only": {
+          "fn": 1,
+          "fp": 0,
+          "tn": 2,
+          "tp": 1
+        },
+        "coverage": {
+          "abstain_on_machine_false": 0,
+          "abstain_on_machine_true": 0,
+          "agent_abstained": 0,
+          "agent_decided": 4,
+          "machine_reference_decided_total": 4,
+          "selective_coverage": 1.0
+        },
+        "metrics_decided_only": {
+          "accuracy": 0.75,
+          "f1": 0.6666666666666666,
+          "false_negative_rate": 0.5,
+          "false_positive_rate": 0.0,
+          "precision": 1.0,
+          "recall_tp_retention": 0.5,
+          "specificity": 1.0
+        },
+        "metrics_end_to_end": {
+          "false_positive_removal_rate": 1.0,
+          "tp_retention": 0.5
+        },
+        "records": 4
+      }
+    },
+    "rule": {
+      "javascript.lang.security.detect-insecure-websocket": {
+        "confusion_matrix_decided_only": {
+          "fn": 1,
+          "fp": 0,
+          "tn": 2,
+          "tp": 1
+        },
+        "coverage": {
+          "abstain_on_machine_false": 0,
+          "abstain_on_machine_true": 0,
+          "agent_abstained": 0,
+          "agent_decided": 4,
+          "machine_reference_decided_total": 4,
+          "selective_coverage": 1.0
+        },
+        "metrics_decided_only": {
+          "accuracy": 0.75,
+          "f1": 0.6666666666666666,
+          "false_negative_rate": 0.5,
+          "false_positive_rate": 0.0,
+          "precision": 1.0,
+          "recall_tp_retention": 0.5,
+          "specificity": 1.0
+        },
+        "metrics_end_to_end": {
+          "false_positive_removal_rate": 1.0,
+          "tp_retention": 0.5
+        },
+        "records": 4
+      }
+    }
+  },
+  "confusion_matrix_decided_only": {
+    "fn": 1,
+    "fp": 0,
+    "tn": 2,
+    "tp": 1
+  },
+  "coverage": {
+    "abstain_on_machine_false": 0,
+    "abstain_on_machine_true": 0,
+    "agent_abstained": 0,
+    "agent_decided": 4,
+    "machine_reference_decided_total": 4,
+    "selective_coverage": 1.0
+  },
+  "evaluation_scope": "LEAK_FREE_BALANCED_TEST_SPLIT",
+  "excluded_machine_reference": {
+    "MACHINE_UNCERTAIN": 0
+  },
+  "inputs": {
+    "full_reference_labels_sha256": "5005bddff9abd3b2ace64aa8e4aa8f3e197a5bc3cf56ef4db6e0104a48be123d",
+    "predictions": {
+      "path": "data/splits/opengrep-machine-benchmark-r1-20260814/repository-context-predictions.jsonl",
+      "sha256": "f29c26e3923744f156fdd4a0a7dc3f35f7b287fc2e73df76cee7ab8cf894b6d4"
+    },
+    "split": {
+      "path": "data/splits/opengrep-machine-benchmark-r1-20260814/test.jsonl",
+      "sha256": "2225a326d405a15cb5af95142a67149b5007a12e2cb29909b062a2574106b3cf"
+    }
+  },
+  "machine_prevalence": {
+    "machine_false_positive": 2,
+    "machine_true_positive": 2,
+    "machine_uncertain": 0,
+    "records": 4,
+    "tp_fraction_lower_bound": 0.5,
+    "tp_fraction_upper_bound": 0.5
+  },
+  "metrics_decided_only": {
+    "accuracy": 0.75,
+    "f1": 0.6666666666666666,
+    "false_negative_rate": 0.5,
+    "false_positive_rate": 0.0,
+    "precision": 1.0,
+    "recall_tp_retention": 0.5,
+    "specificity": 1.0
+  },
+  "metrics_end_to_end": {
+    "false_positive_removal_rate": 1.0,
+    "tp_retention": 0.5
+  },
+  "positive_class": "machine_referenced_vulnerability",
+  "reference_policy": {
+    "human_gold": false,
+    "metrics_name": "exploratory metrics against frozen LLM-adjudicated reference labels",
+    "publish_as_official": false,
+    "tier": "LLM_ADJUDICATED_MACHINE_REFERENCE"
+  },
+  "reference_release": "opengrep-representative-openai-luna-r20-20260814",
+  "schema_version": 1
+}

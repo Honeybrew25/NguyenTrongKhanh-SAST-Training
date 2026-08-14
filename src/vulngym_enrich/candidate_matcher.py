@@ -285,7 +285,7 @@ def match_candidates(
             ),
             "candidate": (
                 "sink location within line tolerance but missing compatible category/CWE "
-                "or source dataflow evidence; human review required"
+                "or source dataflow evidence; independent verification required"
             ),
             "line_tolerance": tolerance,
             "verified_entries_only": verified_only,

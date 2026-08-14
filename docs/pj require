@@ -1,0 +1,599 @@
+QUYẾT ĐỊNH PHƯƠNG PHÁP CỦA PROJECT — 14/08/2026
+Human review là tùy chọn, không phải điều kiện để tạo hoặc công bố benchmark. Project chấp nhận xác minh độc lập bằng hai LLM chạy mù và một adjudicator chạy mù-trước, với evidence/provenance/checksum đã khóa và UNKNOWN giữ riêng. Kết quả phải ghi LLM_verified hoặc LLM_ADJUDICATED_MACHINE_REFERENCE; không được gọi là human gold. Chi tiết: docs/machine-reference-publication-policy.md.
+________________________________________
+Mình hiểu yêu cầu của task này như sau: không phải chỉ chạy Semgrep rồi gom output, mà mục tiêu là biến VulnGym từ benchmark thiên về “có tìm ra vuln thật hay không” thành một benchmark có cả positive findings + realistic false-positive findings, rồi dùng nó để đánh giá một agent chuyên verify/triage finding.
+Hiện VulnGym v0.1.4 có 184 advisories, 408 reachable vulnerability entries trên 23 repositories; 393/408 entries đã được human-audit. Mỗi entry gắn với đúng vulnerable commit và có entry_point, critical_operation, trace, nên ground truth khá mạnh ở mức project/repository.  Đáng chú ý là evaluator gốc hiện tại chỉ tính recall/coverage, không penalize việc report thừa, và chính README cũng nói chưa phải precision-aware benchmark.  Đây gần như chính là lý do task của bạn yêu cầu “enrich bằng FP + build verifier”.
+1. Task thực chất muốn giải quyết vấn đề gì?
+Bài toán hiện tại của VulnGym là:
+Agent có tìm ra vulnerability đã biết trong một repository thật hay không?
+Nhưng trong thực tế SAST / vulnerability scanner có thể trả về rất nhiều findings. Một security engineer không chỉ cần biết “tool có tìm thấy vuln không”, mà còn phải biết:
+Trong 100 findings tool báo, cái nào thực sự exploitable / valid, cái nào chỉ là false positive?
+VulnGym gốc chưa đánh giá tốt phần đó vì ground truth chủ yếu chứa vulnerabilities thật. Evaluator chính thức hiện báo advisory-level recall và entry-level recall, không tính precision/F1. 
+Task của bạn về bản chất là xây thêm bài toán:
+Finding Verification / Vulnerability Triage
+Input:
+Repository
++
+Candidate finding
++
+Finding location
++
+Rule/CWE/message
+Output:
+TP / FP
++
+reason/evidence
++
+optional confidence
+Sau đó đánh giá xem agent có loại bỏ FP tốt nhưng vẫn giữ được TP hay không.
+________________________________________
+2. Phần 1 — Enrich dataset bằng False Positives
+Đây là chỗ dễ đi sai nhất.
+Không nên hiểu:
+“Semgrep tìm ra 1.000 findings → 900 cái mặc định label FP vì anh bảo ~90% là FP.”
+Không được làm vậy.
+Con số “khoảng 90%” trong yêu cầu nên hiểu là một hint để tạo candidate FP nhanh, không phải ground truth. Static-analysis tools thực tế có false-positive problem, vì việc exploit được hay không phụ thuộc nhiều vào context mà static analysis có thể khó xác định.  Nhưng một Semgrep finding hoàn toàn có thể trùng hoặc phát hiện thêm một vulnerability thật.
+Pipeline nên là:
+VulnGym repositories
+       ↓
+checkout đúng vulnerable commit
+       ↓
+Semgrep / Opengrep scan
+       ↓
+raw_candidate_findings
+       ↓
+deduplicate / normalize
+       ↓
+compare với VulnGym ground truth
+       ↓
+independent LLM verification
+       ↓
+TP / FP labels
+       ↓
+enriched dataset
+Bước 1 — Checkout đúng commit
+Mỗi VulnGym record có:
+repo_url
+commit
+nên phải scan đúng commit mà VulnGym chỉ định, không scan main/master. README xác nhận mỗi sample gắn với vulnerable commit cụ thể. 
+Sai commit = toàn bộ label có thể sai.
+Bước 2 — Chạy scanner
+Có thể chạy:
+semgrep scan --config auto <repo>
+và/hoặc Opengrep.
+Semgrep là static-analysis engine hỗ trợ hơn 30 ngôn ngữ; Opengrep cũng là open-source static-analysis engine dùng pattern/semantic matching và hỗ trợ hơn 30 ngôn ngữ. 
+Nên lưu raw finding, đừng chỉ lưu file:line.
+Ví dụ schema:
+{
+  "repo_url": "...",
+  "commit": "...",
+
+  "tool": "semgrep",
+  "rule_id": "...",
+  "cwe": "CWE-79",
+
+  "file": "src/foo.js",
+  "start_line": 120,
+  "end_line": 125,
+
+  "message": "...",
+  "severity": "ERROR",
+
+  "label": "FP",
+
+  "label_source": "LLM_verified"
+}
+Nếu có taint trace:
+{
+  "source": {...},
+  "sink": {...},
+  "dataflow": [...]
+}
+thì giữ luôn, vì nó rất hữu ích cho verifier agent.
+________________________________________
+3. Quan trọng: TP/FP phải được định nghĩa thế nào?
+Bạn nên chốt definition ngay từ đầu.
+Positive / TP
+Candidate finding thực sự mô tả một exploitable/reachable vulnerability ở version đó.
+Không nhất thiết phải match chính xác từng chữ với VulnGym; nhưng với benchmark ban đầu, cách an toàn nhất là coi finding là TP nếu nó correspond tới ground-truth vulnerability/entry đã verified.
+VulnGym matcher gốc dùng:
+normalized exact path
+±5 lines
+entry_point ↔ entry_point
+critical_operation ↔ critical_operation
+để match result với ground truth. 
+Bạn có thể reuse logic này làm candidate matching, nhưng không nên coi nó là final FP classifier.
+Ví dụ:
+Semgrep line = 104
+GT critical_operation = line 108
+
+→ candidate TP
+Negative / FP
+Finding scanner báo nhưng khi xem full project context:
+source không attacker-controlled
+hoặc
+sink không reachable
+hoặc
+input đã sanitize
+hoặc
+permission/auth check tồn tại
+hoặc
+code path dead/unreachable
+hoặc
+framework tự escape
+hoặc
+finding chỉ là dangerous-looking pattern nhưng không exploitable
+thì label FP.
+Semgrep cũng mô tả việc context như sanitizers, exposure và framework protections là nguyên nhân static SAST có thể tạo false positives. 
+________________________________________
+4. Cẩn thận với “unknown vulnerabilities”
+Đây là risk lớn nhất của task.
+Giả sử:
+VulnGym GT:
+SQL injection tại foo.py:100
+
+Semgrep:
+path traversal tại bar.py:250
+Bạn không thể tự động kết luận bar.py:250 là FP chỉ vì VulnGym không annotate nó.
+Nó có thể là:
+FP
+hoặc
+một vulnerability thật nhưng VulnGym chưa annotate
+Do đó dataset nên có ít nhất:
+TP
+FP
+UNKNOWN / UNVERIFIED
+Trong benchmark chính thức chỉ sử dụng:
+TP + verified FP
+UNKNOWN không đưa vào denominator.
+Đây là một trong những điều quan trọng nhất cần nói lại với người giao task.
+________________________________________
+5. Không nên dùng chính scanner làm ground truth
+Ví dụ:
+Semgrep → sinh candidate
+Semgrep rule matching → label FP
+Agent → evaluate
+thì benchmark bị circular.
+Bạn cần tách:
+candidate generator ≠ ground-truth verifier
+Quy trình project sử dụng:
+Semgrep / Opengrep
+        ↓
+candidate
+
+Hai LLM review mù độc lập
+        ↓
+Adjudicator mù-trước cho disagreement/audit
+        ↓
+label
+Nếu workload lớn có thể:
+hai model chi phí thấp review toàn bộ
++
+model mạnh adjudicate các case khó và audit mẫu FP
+Nhưng report phải nói rõ label provenance:
+LLM_verified
+LLM_ADJUDICATED_MACHINE_REFERENCE
+heuristic
+unverified
+________________________________________
+6. Dataset enriched cuối cùng nên trông như thế nào?
+Mình khuyên không sửa trực tiếp entries.jsonl của VulnGym.
+Tạo một layer mới:
+dataset/
+├── vulngym_original/
+├── findings_raw/
+│   ├── semgrep.jsonl
+│   └── opengrep.jsonl
+├── findings_enriched.jsonl
+└── splits/
+    ├── train.jsonl
+    ├── val.jsonl
+    └── test.jsonl
+Một finding:
+{
+  "finding_id": "...",
+
+  "repo_url": "...",
+  "commit": "...",
+
+  "tool": "semgrep",
+  "rule_id": "...",
+  "cwe": "...",
+
+  "finding": {
+    "path": "...",
+    "start_line": 123,
+    "end_line": 127,
+    "message": "..."
+  },
+
+  "context": {
+    "function": "...",
+    "source": "...",
+    "sink": "..."
+  },
+
+  "label": "TP",
+  "label_reason": "...",
+  "label_source": "LLM_verified",
+
+  "matched_vulngym_entry": "..."
+}
+________________________________________
+7. Phần 2 — Build agent để verify finding
+Đừng build agent để “tìm vulnerability từ đầu”.
+Đấy là vulnerability-hunting agent, khác task.
+Agent bạn cần build nhận một finding đã có rồi trả lời:
+Finding này valid hay false positive?
+Một architecture đơn giản nhưng đúng bài:
+Candidate finding
+       ↓
+1. Finding parser
+       ↓
+2. Context retriever
+       ↓
+3. Source/sink analyzer
+       ↓
+4. Reachability / sanitization / guard analysis
+       ↓
+5. LLM reasoning
+       ↓
+TP / FP / uncertain
++
+evidence
++
+confidence
+Một output tốt:
+{
+  "verdict": "FP",
+  "confidence": 0.92,
+
+  "reason": "User-controlled input is sanitized before reaching the SQL sink.",
+
+  "evidence": [
+    {
+      "file": "src/foo.py",
+      "line": 72
+    },
+    {
+      "file": "src/foo.py",
+      "line": 101
+    }
+  ]
+}
+Có research gần đây theo đúng hướng này: QASecClaw dùng SAST tạo candidate rồi dùng LLM/multi-agent để contextual review và lọc FP; paper báo cải thiện F1 và giảm false positives đáng kể so với standalone Semgrep trên benchmark của họ.  Bạn có thể tham khảo architecture, nhưng không cần build multi-agent phức tạp ngay từ đầu.
+________________________________________
+8. Baseline nên có
+Để report có ý nghĩa, đừng chỉ report agent của bạn.
+Nên có tối thiểu:
+Baseline A:
+Trust SAST
+→ tất cả findings = TP
+
+Baseline B:
+Single LLM verifier
+
+Your system:
+Agent + repository context
+Nếu có thời gian:
+LLM only
+vs
+LLM + local function
+vs
+LLM + repository context
+vs
+agentic code navigation
+Như vậy bạn chứng minh được agent thật sự mang lại benefit.
+________________________________________
+9. Metrics — đây là phần manager chắc chắn muốn xem
+Đặt:
+Positive = real vulnerability / TP finding
+Negative = false positive finding
+Confusion matrix:
+Ground truth	Agent says TP	Agent says FP
+TP	TP	FN
+FP	FP	TN
+Sau đó:
+Precision
+Precision = TP / (TP + FP)
+Ý nghĩa:
+Trong số findings agent nói là vulnerability thật, bao nhiêu cái thực sự đúng?
+Recall
+Recall = TP / (TP + FN)
+Ý nghĩa:
+Trong số vulnerability findings thật, agent giữ lại được bao nhiêu?
+F1
+F1 = 2 × Precision × Recall / (Precision + Recall)
+F1 cân bằng giữa hai mục tiêu.
+Cũng nên report:
+False Positive Rate = FP / (FP + TN)
+
+False Negative Rate = FN / (FN + TP)
+
+Specificity = TN / (TN + FP)
+
+Accuracy = (TP + TN) / total
+Nhưng với dataset mất cân bằng nhiều FP thì accuracy không nên là metric chính.
+Ví dụ nếu:
+1000 findings
+900 FP
+100 TP
+Một model nói tất cả là FP:
+accuracy = 90%
+nhưng:
+recall TP = 0%
+=> vô dụng.
+Do đó metric chính nên là:
+Precision
+Recall
+F1
+FP reduction
+TP retained
+________________________________________
+10. Một metric rất phù hợp với task này
+Ngoài P/R/F1, mình sẽ report:
+FP Reduction Rate
+(original FP - remaining FP)
+----------------------------
+original FP
+Ví dụ:
+Before agent:
+900 FP
+
+After agent:
+150 FP
+
+FP Reduction = 83.3%
+TP Retention Rate
+TP retained / original TP
+Ví dụ:
+100 TP
+agent giữ 94
+
+TP Retention = 94%
+Hai con số này rất dễ hiểu khi report cho team:
+Agent loại được 83% noise nhưng vẫn giữ 94% vuln thật.
+________________________________________
+11. Phải split dataset cẩn thận
+Đây cũng là chỗ rất dễ tạo kết quả ảo.
+Không random split finding-level.
+Ví dụ cùng một repo/CVE có 20 findings, bạn để:
+15 train
+5 test
+thì model có thể đã thấy code/vulnerability gần giống trong train.
+Nên split ít nhất ở:
+repository-level
+hoặc:
+advisory/CVE-level
+Tốt nhất để đánh giá generalization:
+train repos
+validation repos
+test repos
+
+không overlap repository
+Và kiểm tra không có:
+same advisory
+same patch
+near-duplicate finding
+same vulnerable commit
+leak giữa train/test.
+________________________________________
+12. Đừng “train/test” trên original ground truth lẫn lộn
+VulnGym có verify = 1 và verify = 0.
+README khuyến nghị verify=1 cho strict/reproducible benchmarking vì những entry đó đã được human-reviewed. 
+Vì vậy phiên bản đầu tiên nên lấy:
+VulnGym verify == 1
+làm positive high-confidence set.
+Hiện tại đó là:
+393 / 408 entries
+theo v0.1.4. 
+15 entries chưa verified có thể để:
+excluded / separate experiment
+________________________________________
+13. Một nuance nữa: VulnGym có nhiều business-logic vulns
+VulnGym không phải benchmark chỉ gồm SQLi/XSS/path traversal. Khoảng 71.2% advisories được phân loại là business-logic vulnerabilities, còn 28.8% là traditional vulnerability types. 
+Điều này có nghĩa Semgrep/OpenGrep có khả năng tạo FP chủ yếu cho nhóm traditional/pattern-based rules, trong khi các business-logic vulnerabilities có thể không tạo ra candidate tương ứng.
+Vì vậy trong report phải breakdown:
+traditional vulnerabilities
+vs
+business logic vulnerabilities
+và:
+CWE/category
+tool
+repository
+language
+Không nên chỉ có một F1 tổng.
+________________________________________
+14. Definition của task nên chốt với manager như thế này
+Goal
+Mở rộng VulnGym thành benchmark có cả true-positive và false-positive vulnerability findings, sau đó xây dựng một agent để xác minh một candidate finding là TP hay FP dựa trên full repository context.
+Phase 1 — Dataset enrichment
+1.	Checkout đúng vulnerable commit của từng VulnGym sample.
+2.	Chạy các SAST tools như Semgrep/OpenGrep để generate candidate findings.
+3.	Normalize và deduplicate findings.
+4.	Match findings với VulnGym ground truth để identify các candidate TP.
+5.	Review các findings còn lại để phân loại:
+○	TP
+○	FP
+○	Unknown / unverified
+6.	Chỉ TP và verified FP được đưa vào benchmark chính.
+7.	Lưu provenance: tool, rule, CWE, repository, commit, location và lý do label.
+Không mặc định tất cả findings ngoài VulnGym ground truth là FP vì chúng có thể là vulnerability thật chưa được annotate.
+Phase 2 — Finding verification agent
+Input:
+●	repository + commit
+●	candidate finding
+●	rule/CWE
+●	file/line
+●	scanner message
+Output:
+●	TP / FP / uncertain
+●	confidence
+●	reasoning
+●	code evidence
+Agent cần dùng repository context để kiểm tra reachability, source/sink, sanitization, authorization/validation guards và các semantic conditions liên quan.
+Evaluation
+Positive class = real vulnerability finding.
+Metrics chính:
+●	Precision
+●	Recall
+●	F1
+●	False-positive reduction rate
+●	True-positive retention rate
+Metrics phụ:
+●	FPR
+●	FNR
+●	Specificity
+●	Accuracy
+●	per-CWE/category/tool/repository breakdown
+Dataset phải được split theo repository hoặc advisory để tránh train/test leakage.
+Baselines
+So sánh ít nhất:
+1.	Raw SAST — trust all findings.
+2.	LLM-only verifier.
+3.	Repository-context verification agent.
+Final deliverables
+●	Thống kê original VulnGym.
+●	Số raw Semgrep/OpenGrep findings.
+●	Số TP / FP / unknown sau enrichment.
+●	Dataset schema và labeling methodology.
+●	Agent architecture và implementation.
+●	Precision / Recall / F1 và confusion matrix.
+●	FP reduction và TP retention.
+●	Breakdown theo vulnerability category/tool.
+●	Error analysis các FP/FN điển hình.
+________________________________________
+Nếu muốn làm đúng hướng ngay từ ngày đầu
+Mình sẽ ưu tiên theo thứ tự này:
+Đầu tiên, clone VulnGym và viết script clone/checkout toàn bộ repo đúng commit. Tiếp theo, chạy Semgrep/OpenGrep và chuẩn hóa output thành một schema chung. Sau đó, viết matcher với VulnGym ground truth để tìm những SAST findings có khả năng là TP. Phần còn lại không label FP ngay mà đưa vào verification queue.
+Khi đã có khoảng vài trăm verified TP + verified FP, mới build baseline verifier. Đừng build agent trước khi definition và label của dataset ổn, vì nếu ground truth sai thì precision/recall/F1 của agent cũng vô nghĩa.
+Điểm quan trọng nhất để bạn không đi sai yêu cầu là:
+“90% Semgrep findings là FP” chỉ là cách để khai thác Semgrep như một FP candidate generator. Nó không phải quy tắc labeling. Task thực sự là tạo một precision-aware version của VulnGym và đánh giá khả năng triage/verify findings của agent.
+Điều này cũng khớp trực tiếp với roadmap của chính VulnGym: repo ghi rõ evaluator hiện tại chỉ tính recall, và liệt kê precision/F1 cùng per-category breakdown là hướng cải tiến evaluator. 
+
+Bạn đang ở cuối bước “Candidate Generation / Raw Findings Collection” của Phase 1.
+Việc có >100.000 nhóm cảnh báo từ OpenGrep chưa có nghĩa là bạn đã enrich xong dataset. Hiện tại 100k đó mới là candidate findings, chưa phải 100k false positives.
+Luồng công việc của bạn lúc này là:
+VulnGym original
+      ↓
+Checkout vulnerable commits
+      ↓
+OpenGrep scan
+      ↓
+~100,000 raw findings       ← BẠN ĐANG Ở ĐÂY
+      ↓
+Normalize + Deduplicate
+      ↓
+Filter / Match Ground Truth
+      ↓
+TP candidates / FP candidates / Unknown
+      ↓
+Verify + Label
+      ↓
+Enriched Dataset
+      ↓
+Build Verification Agent
+      ↓
+Evaluate Precision / Recall / F1
+Bước tiếp theo: đừng đưa 100k findings thẳng vào agent
+Trước hết hãy normalize và deduplicate. Một vulnerability/pattern có thể xuất hiện nhiều lần do nhiều rules hoặc cùng source/sink. Tạo một schema thống nhất, tối thiểu gồm:
+{
+  "repo": "...",
+  "commit": "...",
+  "tool": "opengrep",
+  "rule_id": "...",
+  "cwe": "...",
+  "path": "...",
+  "start_line": 123,
+  "end_line": 125,
+  "message": "...",
+  "severity": "...",
+  "label": null
+}
+Sau đó thống kê xem 100k đến từ đâu: bao nhiêu repo, bao nhiêu rule, bao nhiêu CWE, rule nào tạo nhiều findings nhất. Đây là bước rất quan trọng vì có thể 50–80% số lượng đến từ vài rule cực noisy.
+Tiếp theo, match OpenGrep findings với VulnGym ground truth. Với mỗi finding, kiểm tra nó có liên quan đến entry_point, critical_operation, file/location và vulnerability tương ứng trong VulnGym hay không. Có thể dùng location tolerance như ±5 lines để tạo candidate match, nhưng location matching chỉ nên là heuristic chứ chưa phải final label.
+Sau bước này, bạn nên có ba bucket:
+A. MATCHED / likely TP
+   OpenGrep finding match VulnGym ground truth
+
+B. UNMATCHED / candidate FP
+   OpenGrep finding không match VulnGym ground truth
+
+C. UNKNOWN
+   Không đủ thông tin để kết luận
+Điểm cực kỳ quan trọng: B không được tự động đổi thành FP. Một finding không có trong VulnGym có thể là một vulnerability thật mà VulnGym chưa annotate.
+Sau đó mới đến bước quan trọng nhất: tạo ground truth FP
+Bạn không cần review cả 100.000 findings. Hãy giảm chúng xuống bằng deduplication + sampling có kiểm soát. Ví dụ sau dedup còn 30k–50k thì lấy một tập vài nghìn candidate, nhưng sample phải đa dạng theo repo/rule/CWE/language thay vì lấy random toàn bộ.
+Với mỗi candidate, verifier cần xem code context và quyết định:
+TP
+- vulnerability thực sự tồn tại/reachable
+
+FP
+- source không user-controlled
+- sink không reachable
+- đã sanitize
+- có validation/authorization guard
+- framework protection
+- dead code
+- rule match syntax nhưng không exploitable
+
+UNKNOWN
+- chưa đủ evidence
+Kết quả Phase 1 mà bạn cần hướng tới không phải:
+“OpenGrep tạo ra 100.000 FP.”
+mà là kiểu:
+OpenGrep raw findings:       105,432
+After normalization:          98,210
+After deduplication:           41,830
+
+Selected for verification:     5,000
+
+Verified TP:                     420
+Verified FP:                   4,310
+Unknown:                         270
+Các số trên chỉ minh họa.
+Sau đó combine verified TP + verified FP thành enriched VulnGym. Đây mới là deliverable số 1.
+________________________________________
+Khi dataset đó đã ổn, bạn chuyển sang Phase 2: Verification Agent. Agent nhận một finding + repository context, không phải nhận repo rồi tự đi tìm vuln:
+OpenGrep finding
+      +
+repository/commit
+      ↓
+Verifier Agent
+      ↓
+Read relevant code
+      ↓
+Follow call/data flow
+      ↓
+Check source
+Check sink
+Check sanitization
+Check guards/auth
+Check reachability
+      ↓
+TP / FP / uncertain
++ evidence
++ confidence
+Bạn chạy agent trên test set mà agent chưa từng thấy, rồi tạo confusion matrix:
+	Ground truth TP	Ground truth FP
+Agent → TP	TP	FP
+Agent → FP	FN	TN
+Từ đó tính:
+Precision = TP / (TP + FP)
+
+Recall = TP / (TP + FN)
+
+F1 = 2 × Precision × Recall
+     -----------------------
+       Precision + Recall
+Và hai metric rất đáng report cho bài này:
+FP Reduction
+= số FP agent loại / tổng FP
+
+TP Retention
+= số TP agent giữ / tổng TP
+Ví dụ report cuối có thể nói:
+OpenGrep sinh 105k raw findings. Sau normalization/dedup còn 42k unique findings. Chúng tôi xây dựng benchmark gồm 500 TP và 4.500 verified FP. Verification agent đạt Precision 82%, Recall 94%, F1 87.6%, loại được 91% FP trong khi giữ lại 94% vulnerability thật.
+Đó mới là kết quả trả lời đúng yêu cầu đề bài.
+Vì vậy việc bạn nên làm ngay bây giờ là chưa build agent. Hãy xử lý 100k OpenGrep findings theo thứ tự: normalize → deduplicate → thống kê theo rule/repo/CWE → match với VulnGym GT → tạo candidate FP → verify/label một tập đại diện → đóng băng enriched dataset → rồi mới build agent.
+Nếu bạn muốn, bước tiếp theo mình có thể giúp bạn thiết kế cụ thể script/pipeline để biến 100.000 OpenGrep findings hiện tại thành tập TP/FP usable, bao gồm luôn schema JSONL, dedup rule và thuật toán match với VulnGym ground truth.

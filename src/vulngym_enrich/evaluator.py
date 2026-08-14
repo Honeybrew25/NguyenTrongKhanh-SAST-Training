@@ -63,12 +63,13 @@ def _unique_nonempty_strings(value: Any, field: str, finding_id: str) -> list[st
 def validate_official_classification_inputs(
     labels: list[dict[str, Any]], predictions: list[dict[str, Any]]
 ) -> None:
-    """Fail closed before computing official verifier metrics.
+    """Fail closed before computing project-approved verifier metrics.
 
     The lower-level ``classification_metrics`` function deliberately remains useful
     for fixtures and exploratory analysis. The CLI calls this gate by default so an
-    empty template, AI-authored labels, incomplete evidence, or mismatched corpora
-    cannot silently become an official-looking metric report.
+    empty template, unproven model labels, incomplete evidence, or mismatched
+    corpora cannot silently become a project-approved metric report. Independent
+    model verification is accepted; human review is optional.
     """
 
     if not labels:
@@ -102,10 +103,26 @@ def validate_official_classification_inputs(
         reviewer = row.get("reviewer")
         if not isinstance(reviewer, dict) or set(reviewer) != {"id", "kind"}:
             raise ValueError(f"gold label reviewer is invalid for {finding_id}")
-        if reviewer.get("kind") != "HUMAN":
-            raise ValueError(f"official gold label must be human-reviewed: {finding_id}")
+        reviewer_kind = reviewer.get("kind")
+        if reviewer_kind not in {"HUMAN", "MODEL"}:
+            raise ValueError(
+                f"official reference reviewer kind must be HUMAN or MODEL: {finding_id}"
+            )
         if not isinstance(reviewer.get("id"), str) or not reviewer["id"].strip():
-            raise ValueError(f"human reviewer id is required for {finding_id}")
+            raise ValueError(f"reviewer id is required for {finding_id}")
+        if reviewer_kind == "MODEL":
+            verification = row.get("verification")
+            if (
+                not isinstance(verification, dict)
+                or verification.get("method")
+                not in {"LLM_VERIFIED", "LLM_ADJUDICATED_MACHINE_REFERENCE"}
+                or verification.get("blind") is not True
+                or verification.get("independent_from_candidate_generator") is not True
+            ):
+                raise ValueError(
+                    "MODEL reference requires blind independent verification "
+                    f"provenance: {finding_id}"
+                )
 
         reviewed_at = row.get("reviewed_at")
         if not isinstance(reviewed_at, str) or not reviewed_at.strip():
@@ -361,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     classify.add_argument(
         "--allow-incomplete-gold",
         action="store_true",
-        help="skip the human-gold/evidence gate for development fixtures only",
+        help="skip the independent-reference/evidence gate for development fixtures only",
     )
 
     args = parser.parse_args(argv)

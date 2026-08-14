@@ -537,8 +537,161 @@ def test_gemini_retries_citation_outside_controller_exposure(
 
     assert provider.complete(request, case_directory=case, step=1) == valid
     feedback = client.models.calls[1]["contents"][-1]["parts"][1]["text"]
-    assert "already exposed" in feedback
+    assert "split or narrow" in feedback
+    assert "1-10" in feedback
     metadata = provider.response_metadata(case, 1)
+    assert metadata["attempt_history"][0]["cause"] == "RESPONSE_SEMANTICS"
+
+
+def test_gemini_requests_split_for_citation_crossing_exposure_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    crossing = _response(
+        evidence=[
+            {
+                "file": "src/app.py",
+                "start_line": 8,
+                "end_line": 14,
+                "description": "The citation crosses two contiguous reads.",
+            }
+        ]
+    )
+    split = _response(
+        evidence=[
+            {
+                "file": "src/app.py",
+                "start_line": 8,
+                "end_line": 10,
+                "description": "The first exposed portion.",
+            },
+            {
+                "file": "src/app.py",
+                "start_line": 11,
+                "end_line": 14,
+                "description": "The second exposed portion.",
+            },
+        ]
+    )
+    client = FakeClient(
+        [
+            FakeResponse(crossing, response_id="crossing-evidence", model_version="gemini-server-001"),
+            FakeResponse(split, response_id="split-evidence", model_version="gemini-server-001"),
+        ]
+    )
+    provider = _provider(tmp_path, monkeypatch, client, max_attempts=2)
+    request = {
+        "task": "blind_security_finding_verification",
+        "step": 1,
+        "initial_observations": [
+            {
+                "ok": True,
+                "tool": "read_file",
+                "path": "src/app.py",
+                "start_line": 1,
+                "end_line": 10,
+                "content": "first bounded source range",
+            },
+            {
+                "ok": True,
+                "tool": "read_file",
+                "path": "src/app.py",
+                "start_line": 11,
+                "end_line": 20,
+                "content": "second bounded source range",
+            },
+        ],
+    }
+
+    assert provider.complete(request, case_directory=tmp_path / "union", step=1) == split
+    feedback = client.models.calls[1]["contents"][-1]["parts"][1]["text"]
+    assert "split or narrow" in feedback
+    assert "1-10, 11-20" in feedback
+
+
+def test_gemini_requests_abstain_when_no_source_range_can_be_exposed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unsupported = _response(
+        evidence=[
+            {
+                "file": "dist/minified.js",
+                "start_line": 1,
+                "end_line": 1,
+                "description": "The oversized line could not be exposed.",
+            }
+        ]
+    )
+    abstain = _response(
+        verdict="ABSTAIN",
+        confidence="LOW",
+        reason_codes=[],
+        evidence=[],
+        abstain_reason="INSUFFICIENT_CONTEXT",
+    )
+    client = FakeClient(
+        [
+            FakeResponse(unsupported, response_id="unexposed-evidence", model_version="gemini-server-001"),
+            FakeResponse(abstain, response_id="bounded-abstain", model_version="gemini-server-001"),
+        ]
+    )
+    provider = _provider(tmp_path, monkeypatch, client, max_attempts=2)
+    request = {
+        "task": "blind_security_finding_verification",
+        "step": 1,
+        "initial_observations": [
+            {"ok": False, "error": "CONTEXT_BUDGET_EXHAUSTED", "remaining_chars": 80_000}
+        ],
+    }
+
+    assert provider.complete(request, case_directory=tmp_path / "unexposed", step=1) == abstain
+    feedback = client.models.calls[1]["contents"][-1]["parts"][1]["text"]
+    assert "ABSTAIN with empty evidence" in feedback
+
+
+def test_gemini_retries_final_without_evidence_as_insufficient_context_abstain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unsupported = _response(evidence=[])
+    abstain = _response(
+        verdict="ABSTAIN",
+        confidence="LOW",
+        reason_codes=[],
+        evidence=[],
+        abstain_reason="INSUFFICIENT_CONTEXT",
+    )
+    client = FakeClient(
+        [
+            FakeResponse(
+                unsupported,
+                response_id="unsupported-final",
+                model_version="gemini-server-001",
+            ),
+            FakeResponse(
+                abstain,
+                response_id="corrected-abstain",
+                model_version="gemini-server-001",
+            ),
+        ]
+    )
+    provider = _provider(tmp_path, monkeypatch, client, max_attempts=2)
+    request = {
+        "task": "blind_security_finding_verification",
+        "step": 1,
+        "initial_observations": [
+            {
+                "ok": False,
+                "error": "CONTEXT_BUDGET_EXHAUSTED",
+                "remaining_chars": 80_000,
+            }
+        ],
+    }
+
+    assert provider.complete(
+        request, case_directory=tmp_path / "empty-evidence", step=1
+    ) == abstain
+    feedback = client.models.calls[1]["contents"][-1]["parts"][1]["text"]
+    assert "abstain_reason INSUFFICIENT_CONTEXT" in feedback
+    metadata = provider.response_metadata(tmp_path / "empty-evidence", 1)
     assert metadata["attempt_history"][0]["cause"] == "RESPONSE_SEMANTICS"
 
 

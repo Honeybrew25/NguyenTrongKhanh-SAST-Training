@@ -17,9 +17,13 @@ from vulngym_enrich.machine_review import (
     MachineReviewError,
     adjudicate,
     finalize_review,
+    prepare_r6_migration,
+    prepare_r7_supplement,
     prepare_adjudication,
     prepare_review,
     reconcile_reviews,
+    seal_r6_migration,
+    seal_r7_supplement,
 )
 
 
@@ -310,6 +314,7 @@ def _verifier_run(
             "status": "SUCCESS",
             "identity": {"finding_id": finding_id},
             "prediction_sha256": _sha(case / "prediction.json"),
+            "provider_usage": {"input_tokens": 10, "output_tokens": 2},
         }
         _json(case / "status.json", status)
         cases.append(status)
@@ -361,6 +366,85 @@ def _verifier_run(
     )
 
 
+def _mark_run_partial(run: Path, failed_ids: set[str]) -> None:
+    manifest_path = run / "verifier-run.json"
+    manifest = json.loads(manifest_path.read_text())
+    predictions = [
+        row
+        for row in (
+            json.loads(line)
+            for line in (run / "verifier-predictions.jsonl").read_text().splitlines()
+        )
+        if row["finding_id"] not in failed_ids
+    ]
+    _jsonl(run / "verifier-predictions.jsonl", predictions)
+    updated_cases = []
+    for status in manifest["cases"]:
+        finding_id = status["identity"]["finding_id"]
+        if finding_id in failed_ids:
+            case = run / "cases" / hashlib.sha256(finding_id.encode()).hexdigest()[:20]
+            (case / "prediction.json").unlink()
+            status = {
+                "schema_version": 1,
+                "status": "FAILED",
+                "identity": status["identity"],
+                "error_type": "ProviderError",
+                "error_code": "PROVIDER_ERROR",
+                "error": "PROVIDER_ERROR",
+                "provider_usage": {"input_tokens": 10, "output_tokens": 2},
+            }
+            _json(case / "status.json", status)
+        updated_cases.append(status)
+    manifest["status"] = "INCOMPLETE"
+    manifest["complete"] = False
+    manifest["case_counts"] = {
+        "total": len(updated_cases),
+        "success": len(updated_cases) - len(failed_ids),
+        "failed": len(failed_ids),
+    }
+    manifest["predictions"] = {
+        "path": "verifier-predictions.jsonl",
+        "sha256": _sha(run / "verifier-predictions.jsonl"),
+        "records": len(predictions),
+    }
+    manifest["cases"] = updated_cases
+    _json(manifest_path, manifest)
+
+
+def _add_schema_retry_usage(run: Path) -> None:
+    manifest_path = run / "verifier-run.json"
+    manifest = json.loads(manifest_path.read_text())
+    case = next((run / "cases").iterdir())
+    metadata_path = case / "step-01-provider-metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    retry_raw = case / "step-01-schema-retry-01-raw-response.json"
+    _json(retry_raw, {"response_id": "retry-response", "model_version": "retry"})
+    metadata["attempt_history"] = [
+        {
+            "attempt": 1,
+            "outcome": "RETRY",
+            "cause": "RESPONSE_SEMANTICS",
+            "normalized_usage": {"input_tokens": 7, "output_tokens": 3},
+            "raw_response": {
+                "path": retry_raw.name,
+                "bytes": retry_raw.stat().st_size,
+                "sha256": _sha(retry_raw),
+            },
+        },
+        {"attempt": 2, "outcome": "ACCEPTED"},
+    ]
+    _json(metadata_path, metadata)
+    usage = {"input_tokens": 17, "output_tokens": 5}
+    manifest["provider"]["usage"] = usage
+    manifest["cases"][0]["provider_usage"] = usage
+    status_path = case / "status.json"
+    status = json.loads(status_path.read_text())
+    status["provider_usage"] = usage
+    _json(status_path, status)
+    manifest["cases"][0] = status
+    _json(manifest_path, manifest)
+
+
 def _prepare(tmp_path: Path) -> tuple[Path, Path, list[dict[str, Any]]]:
     sample, evidence, snapshots, findings = _sample(tmp_path)
     review = tmp_path / "review"
@@ -407,6 +491,215 @@ def test_prepare_freezes_independently_ordered_inputs_and_rejects_model_alias(tm
             evaluated_agent_model="agent",
             expected_records=4,
         )
+
+
+def test_r6_migration_reuses_only_success_and_seals_retry_composite(
+    tmp_path: Path,
+) -> None:
+    sample, evidence, snapshots, findings = _sample(tmp_path)
+    configs = tmp_path / "configs"
+    config_paths = {
+        "a": _config(configs / "a.json", "REVIEWER_A", "model-a", 1),
+        "b": _config(configs / "b.json", "REVIEWER_B", "model-b", 2),
+        "c": _config(configs / "c.json", "ADJUDICATOR_C", "model-c", 3),
+    }
+    base = tmp_path / "r5"
+    review = tmp_path / "r6"
+    for output in (base, review):
+        prepare_review(
+            sample_directory=sample,
+            evidence_packets_path=evidence,
+            snapshot_root=snapshots,
+            output_directory=output,
+            reviewer_a_config_path=config_paths["a"],
+            reviewer_b_config_path=config_paths["b"],
+            adjudicator_config_path=config_paths["c"],
+            evaluated_agent_model="model-under-test",
+            expected_records=4,
+            audit_fraction=0.5,
+            reviewer_a_seed="order-a",
+            reviewer_b_seed="order-b",
+            created_at="2026-08-13T00:00:00+00:00",
+        )
+    all_fp = {
+        finding["finding_id"]: ("FALSE_POSITIVE", "HIGH") for finding in findings
+    }
+    for role, model, seed, version in (
+        ("a", "model-a", 1, "actual-a-r5"),
+        ("b", "model-b", 2, "actual-b-r5"),
+    ):
+        _verifier_run(
+            base / f"reviewer-{role}/run",
+            base / f"reviewer-{role}/blind-input.jsonl",
+            findings,
+            all_fp,
+            model=model,
+            seed=seed,
+            model_version=version,
+            snapshot_root=snapshots,
+        )
+    _mark_run_partial(base / "reviewer-a/run", {"finding-1"})
+    _mark_run_partial(base / "reviewer-b/run", {"finding-2", "finding-3"})
+
+    migration = prepare_r6_migration(
+        base_review_directory=base,
+        review_directory=review,
+        created_at="2026-08-14T00:00:00+00:00",
+    )
+    assert migration["roles"]["reviewer_a"]["reused_success"] == 3
+    assert migration["roles"]["reviewer_a"]["retry_records"] == 1
+    assert migration["roles"]["reviewer_b"]["reused_success"] == 2
+    assert migration["roles"]["reviewer_b"]["retry_records"] == 2
+
+    retry_a = review / "reviewer-a/retry-input.jsonl"
+    frozen_retry_a = retry_a.read_bytes()
+    retry_a.write_bytes(frozen_retry_a + b"\n")
+    with pytest.raises(MachineReviewError, match="identity|proof"):
+        prepare_r6_migration(
+            base_review_directory=base,
+            review_directory=review,
+        )
+    retry_a.write_bytes(frozen_retry_a)
+
+    for role, model, seed, version in (
+        ("a", "model-a", 1, "actual-a-r6"),
+        ("b", "model-b", 2, "actual-b-r6"),
+    ):
+        retry_input = review / f"reviewer-{role}/retry-input.jsonl"
+        retry_ids = [
+            json.loads(line)["finding_id"] for line in retry_input.read_text().splitlines()
+        ]
+        _verifier_run(
+            review / f"reviewer-{role}/retry-run",
+            retry_input,
+            findings,
+            {finding_id: ("ABSTAIN", "LOW") for finding_id in retry_ids},
+            model=model,
+            seed=seed,
+            model_version=version,
+            snapshot_root=snapshots,
+        )
+
+    sealed = seal_r6_migration(
+        review_directory=review, created_at="2026-08-14T01:00:00+00:00"
+    )
+    assert sealed["status"] == "COMPLETE"
+    assert sealed["composite_runs"]["reviewer_a"]["records"] == 4
+    assert sealed["composite_runs"]["reviewer_b"]["records"] == 4
+    reconciliation = reconcile_reviews(
+        review_directory=review,
+        reviewer_a_run=review / "reviewer-a/run",
+        reviewer_b_run=review / "reviewer-b/run",
+        created_at="2026-08-14T02:00:00+00:00",
+    )
+    assert reconciliation["records"] == 4
+    assert reconciliation["counts"]["routed_to_adjudicator"] >= 3
+
+
+def test_r7_supplement_reuses_r5_r6_success_and_retries_only_remaining_failure(
+    tmp_path: Path,
+) -> None:
+    sample, evidence, snapshots, findings = _sample(tmp_path)
+    configs = tmp_path / "configs"
+    config_paths = {
+        "a": _config(configs / "a.json", "REVIEWER_A", "model-a", 1),
+        "b": _config(configs / "b.json", "REVIEWER_B", "model-b", 2),
+        "c": _config(configs / "c.json", "ADJUDICATOR_C", "model-c", 3),
+    }
+    r5 = tmp_path / "r5"
+    r6 = tmp_path / "r6"
+    r7 = tmp_path / "r7"
+    for output in (r5, r6, r7):
+        prepare_review(
+            sample_directory=sample,
+            evidence_packets_path=evidence,
+            snapshot_root=snapshots,
+            output_directory=output,
+            reviewer_a_config_path=config_paths["a"],
+            reviewer_b_config_path=config_paths["b"],
+            adjudicator_config_path=config_paths["c"],
+            evaluated_agent_model="model-under-test",
+            expected_records=4,
+            audit_fraction=0.5,
+            reviewer_a_seed="order-a",
+            reviewer_b_seed="order-b",
+            created_at="2026-08-13T00:00:00+00:00",
+        )
+    all_fp = {
+        finding["finding_id"]: ("FALSE_POSITIVE", "HIGH") for finding in findings
+    }
+    for role, model, seed in (("a", "model-a", 1), ("b", "model-b", 2)):
+        _verifier_run(
+            r5 / f"reviewer-{role}/run",
+            r5 / f"reviewer-{role}/blind-input.jsonl",
+            findings,
+            all_fp,
+            model=model,
+            seed=seed,
+            model_version=f"actual-{role}-r5",
+            snapshot_root=snapshots,
+        )
+    _mark_run_partial(r5 / "reviewer-a/run", {"finding-1", "finding-2"})
+    _mark_run_partial(r5 / "reviewer-b/run", {"finding-1", "finding-3", "finding-4"})
+    prepare_r6_migration(base_review_directory=r5, review_directory=r6)
+    for role, model, seed in (("a", "model-a", 1), ("b", "model-b", 2)):
+        retry_input = r6 / f"reviewer-{role}/retry-input.jsonl"
+        retry_ids = [
+            json.loads(line)["finding_id"] for line in retry_input.read_text().splitlines()
+        ]
+        _verifier_run(
+            r6 / f"reviewer-{role}/retry-run",
+            retry_input,
+            findings,
+            {finding_id: ("ABSTAIN", "LOW") for finding_id in retry_ids},
+            model=model,
+            seed=seed,
+            model_version=f"actual-{role}-r6",
+            snapshot_root=snapshots,
+        )
+        _mark_run_partial(r6 / f"reviewer-{role}/retry-run", {"finding-1"})
+
+    migration = prepare_r7_supplement(
+        base_review_directory=r6,
+        review_directory=r7,
+        created_at="2026-08-14T02:00:00+00:00",
+    )
+    for role in ("a", "b"):
+        proof = migration["roles"][f"reviewer_{role}"]
+        assert proof["reused_success"] == 3
+        assert proof["retry_records"] == 1
+        assert proof["retry_finding_ids"] == ["finding-1"]
+        assert len(proof["sources"]) == 2
+        retry_input = r7 / f"reviewer-{role}/retry-input.jsonl"
+        assert [json.loads(line)["finding_id"] for line in retry_input.read_text().splitlines()] == ["finding-1"]
+        _verifier_run(
+            r7 / f"reviewer-{role}/retry-run",
+            retry_input,
+            findings,
+            {"finding-1": ("ABSTAIN", "LOW")},
+            model=f"model-{role}",
+            seed=1 if role == "a" else 2,
+            model_version=f"actual-{role}-r7",
+            snapshot_root=snapshots,
+        )
+        if role == "a":
+            _add_schema_retry_usage(r7 / "reviewer-a/retry-run")
+
+    progress = machine_review.status(r7)
+    assert progress["migration_release"] == "r7-supplement"
+    assert progress["reviewer_a"]["success"] == 4
+    assert progress["reviewer_b"]["success"] == 4
+
+    sealed = seal_r7_supplement(review_directory=r7)
+    assert sealed["status"] == "COMPLETE"
+    assert sealed["composite_runs"]["reviewer_a"]["records"] == 4
+    assert sealed["composite_runs"]["reviewer_b"]["records"] == 4
+    reconciliation = reconcile_reviews(
+        review_directory=r7,
+        reviewer_a_run=r7 / "reviewer-a/run",
+        reviewer_b_run=r7 / "reviewer-b/run",
+    )
+    assert reconciliation["records"] == 4
 
 
 class _FakeProvider:
@@ -488,11 +781,353 @@ class _FakeProvider:
         )
         return response
 
+
     def response_metadata(self, case_directory: Path, step: int) -> dict[str, Any]:
         return json.loads((case_directory / "step-01-provider-metadata.json").read_text())
 
     def close_case(self, case_directory: Path) -> None:
         return None
+
+
+def test_final_evidence_normalization_restores_only_unique_frozen_node() -> None:
+    frozen = {
+        "file": "src/example.ts",
+        "line": "10-12",
+        "description": "The schema fixes the endpoint and request body.",
+        "code": "10: endpoint = '/fixed'\n11: \n12: body = input",
+    }
+    context = {
+        "finding_id": "finding-normalization",
+        "blind_first_prediction": {"evidence_valid": True, "evidence": [frozen]},
+        "anonymous_reviews": [],
+    }
+    response = {
+        "finding_id": context["finding_id"],
+        "verdict": "FALSE_POSITIVE",
+        "confidence": "HIGH",
+        "reason_codes": ["TYPE_OR_SCHEMA_CONSTRAINT"],
+        "reasoning": "The uniquely cited frozen evidence proves the constraint.",
+        "evidence": [{**frozen, "code": "10: endpoint = '/fixed'\n12: body = input"}],
+        "uncertainty_reason": None,
+    }
+
+    decision, proof = machine_review._normalize_final_response_evidence(
+        response, context
+    )
+
+    assert decision["evidence"] == [frozen]
+    assert response["evidence"][0]["code"] != frozen["code"]
+    assert proof == [
+        {
+            "operation": "RESTORE_UNIQUE_FROZEN_EVIDENCE_NODE_V1",
+            "json_pointer": "/evidence/0",
+            "returned_sha256": machine_review._value_sha256(response["evidence"][0]),
+            "canonical_sha256": machine_review._value_sha256(frozen),
+            "match_keys": "file,line,description",
+        }
+    ]
+
+    context["anonymous_reviews"] = [
+        {"evidence_valid": True, "evidence": [{**frozen, "code": "different"}]}
+    ]
+    with pytest.raises(MachineReviewError, match="not exposed"):
+        machine_review._normalize_final_response_evidence(response, context)
+
+    uncertain = {
+        **response,
+        "verdict": "UNCERTAIN",
+        "confidence": "MEDIUM",
+        "reason_codes": ["OTHER_EXPLAINED"],
+        "evidence": [frozen],
+        "uncertainty_reason": "The exposed source is insufficient.",
+    }
+    uncertain_decision, uncertain_proof = (
+        machine_review._normalize_final_response_evidence(uncertain, context)
+    )
+    assert uncertain_decision["verdict"] == "UNCERTAIN"
+    assert uncertain_decision["reason_codes"] == []
+    assert uncertain["reason_codes"] == ["OTHER_EXPLAINED"]
+    assert uncertain_proof == [
+        {
+            "operation": "CLEAR_NON_FP_REASON_CODES_V1",
+            "json_pointer": "/reason_codes",
+            "returned_sha256": machine_review._value_sha256(["OTHER_EXPLAINED"]),
+            "canonical_sha256": machine_review._value_sha256([]),
+            "match_keys": "verdict",
+        }
+    ]
+
+    containing = {
+        "file": "src/contained.ts",
+        "line": "8-12",
+        "description": "Frozen evidence exposes the complete sink block.",
+        "code": "8: function sink(value) {\n9:   if (value) {\n10:     run(value);\n11:   }\n12: }",
+    }
+    contained_context = {
+        "finding_id": "finding-contained",
+        "blind_first_prediction": {
+            "evidence_valid": True,
+            "evidence": [containing],
+        },
+        "anonymous_reviews": [],
+    }
+    contained_response = {
+        **response,
+        "finding_id": "finding-contained",
+        "evidence": [
+            {
+                "file": containing["file"],
+                "line": "10-11",
+                "description": "The model returned a strict subrange.",
+                "code": "10:       run(value);\n11:   }",
+            }
+        ],
+    }
+    contained_decision, contained_proof = (
+        machine_review._normalize_final_response_evidence(
+            contained_response, contained_context
+        )
+    )
+    assert contained_decision["evidence"] == [containing]
+    assert contained_proof[0]["operation"] == (
+        "RESTORE_UNIQUE_TIGHTEST_CONTAINING_FROZEN_EVIDENCE_NODE_V1"
+    )
+
+    alternate = {**containing, "description": "A second frozen explanation."}
+    source_identity_context = {
+        "finding_id": "finding-source-identity",
+        "blind_first_prediction": {
+            "evidence_valid": True,
+            "evidence": [containing],
+        },
+        "anonymous_reviews": [
+            {"evidence_valid": True, "evidence": [alternate]}
+        ],
+    }
+    source_identity_response = {
+        **response,
+        "finding_id": "finding-source-identity",
+        "evidence": [
+            {
+                **containing,
+                "description": "The model rewrote the explanation.",
+                "code": "8: fabricated display copy",
+            }
+        ],
+    }
+    identity_decision, identity_proof = (
+        machine_review._normalize_final_response_evidence(
+            source_identity_response, source_identity_context
+        )
+    )
+    assert identity_decision["evidence"] == [containing]
+    assert identity_proof[0]["operation"] == (
+        "RESTORE_UNAMBIGUOUS_FROZEN_SOURCE_IDENTITY_NODE_V1"
+    )
+
+    frozen_code_response = {
+        **response,
+        "finding_id": "finding-source-identity",
+        "evidence": [
+            {
+                **containing,
+                "line": "9-12",
+                "description": "The model also changed the displayed range.",
+            }
+        ],
+    }
+    frozen_code_context = {
+        "finding_id": "finding-source-identity",
+        "blind_first_prediction": {
+            "evidence_valid": True,
+            "evidence": [containing],
+        },
+        "anonymous_reviews": [],
+    }
+    frozen_code_decision, frozen_code_proof = (
+        machine_review._normalize_final_response_evidence(
+            frozen_code_response, frozen_code_context
+        )
+    )
+    assert frozen_code_decision["evidence"] == [containing]
+    assert frozen_code_proof[0]["operation"] == (
+        "RESTORE_UNIQUE_FROZEN_CODE_IDENTITY_NODE_V1"
+    )
+
+    numbered_code_response = {
+        **response,
+        "finding_id": "finding-source-identity",
+        "evidence": [
+            {
+                **containing,
+                "line": "8-13",
+                "description": "The model changed the range and indentation.",
+                "code": (
+                    "8:   function sink(value) {\n"
+                    "9:     if (value) {\n"
+                    "10:       run(value);\n"
+                    "11:     }\n"
+                    "12:   }"
+                ),
+            }
+        ],
+    }
+    numbered_decision, numbered_proof = (
+        machine_review._normalize_final_response_evidence(
+            numbered_code_response, frozen_code_context
+        )
+    )
+    assert numbered_decision["evidence"] == [containing]
+    assert numbered_proof[0]["operation"] == (
+        "RESTORE_UNIQUE_NUMBERED_FROZEN_CODE_NODE_V1"
+    )
+
+    unexposed_uncertain = {
+        **response,
+        "finding_id": "finding-unexposed-uncertain",
+        "verdict": "UNCERTAIN",
+        "confidence": "HIGH",
+        "reason_codes": [],
+        "evidence": [
+            {
+                "file": "generated/bundle.js",
+                "line": "1-1",
+                "description": "This optional citation was not exposed by A, B, or C.",
+                "code": "invented display text",
+            }
+        ],
+        "uncertainty_reason": "No valid exposed source establishes the data flow.",
+    }
+    unexposed_context = {
+        "finding_id": "finding-unexposed-uncertain",
+        "blind_first_prediction": {"evidence_valid": True, "evidence": []},
+        "anonymous_reviews": [],
+    }
+    uncertain_decision, uncertain_evidence_proof = (
+        machine_review._normalize_final_response_evidence(
+            unexposed_uncertain, unexposed_context
+        )
+    )
+    assert uncertain_decision["evidence"] == []
+    assert uncertain_evidence_proof[0]["operation"] == (
+        "CLEAR_UNEXPOSED_UNCERTAIN_EVIDENCE_NODE_V1"
+    )
+
+
+@pytest.mark.parametrize("verdict", ["FALSE_POSITIVE", "TRUE_POSITIVE"])
+def test_final_semantic_normalization_clears_forbidden_uncertainty_only(
+    verdict: str,
+) -> None:
+    frozen = {
+        "file": "src/example.ts",
+        "line": "10-10",
+        "description": "The frozen source supports the selected verdict.",
+        "code": "10: return validatedInput;",
+    }
+    context = {
+        "finding_id": f"finding-{verdict.lower()}",
+        "blind_first_prediction": {"evidence_valid": True, "evidence": [frozen]},
+        "anonymous_reviews": [],
+    }
+    response = {
+        "finding_id": context["finding_id"],
+        "verdict": verdict,
+        "confidence": "MEDIUM",
+        "reason_codes": ["SAFE_API_USAGE"] if verdict == "FALSE_POSITIVE" else [],
+        "reasoning": "The cited source supports the selected verdict.",
+        "evidence": [frozen],
+        "uncertainty_reason": "This field is forbidden for a non-UNCERTAIN verdict.",
+    }
+
+    decision, proof = machine_review._normalize_final_response_evidence(
+        response, context
+    )
+
+    assert decision["uncertainty_reason"] is None
+    assert response["uncertainty_reason"] is not None
+    assert proof == [
+        {
+            "operation": "CLEAR_NON_UNCERTAIN_REASON_V1",
+            "json_pointer": "/uncertainty_reason",
+            "returned_sha256": machine_review._value_sha256(
+                response["uncertainty_reason"]
+            ),
+            "canonical_sha256": machine_review._value_sha256(None),
+            "match_keys": "verdict",
+        }
+    ]
+
+
+def test_final_semantic_normalization_never_invents_required_fields() -> None:
+    frozen = {
+        "file": "src/example.ts",
+        "line": "10-10",
+        "description": "The frozen source supports the selected verdict.",
+        "code": "10: return validatedInput;",
+    }
+    context = {
+        "finding_id": "finding-missing-required-field",
+        "blind_first_prediction": {"evidence_valid": True, "evidence": [frozen]},
+        "anonymous_reviews": [],
+    }
+    response = {
+        "finding_id": context["finding_id"],
+        "verdict": "FALSE_POSITIVE",
+        "confidence": "MEDIUM",
+        "reason_codes": [],
+        "reasoning": "The response omitted the required false-positive reason code.",
+        "evidence": [frozen],
+        "uncertainty_reason": "This forbidden field can be discarded.",
+    }
+    with pytest.raises(MachineReviewError, match="FP semantics are invalid"):
+        machine_review._normalize_final_response_evidence(response, context)
+
+    response.update(
+        verdict="UNCERTAIN",
+        reason_codes=["OTHER_EXPLAINED"],
+        uncertainty_reason=None,
+    )
+    with pytest.raises(MachineReviewError, match="UNCERTAIN semantics are invalid"):
+        machine_review._normalize_final_response_evidence(response, context)
+
+
+def test_final_semantic_normalization_restores_context_bound_finding_id() -> None:
+    frozen = {
+        "file": "src/example.ts",
+        "line": "10-10",
+        "description": "The frozen source supports the selected verdict.",
+        "code": "10: return validatedInput;",
+    }
+    context = {
+        "finding_id": "finding-context-bound-identifier",
+        "blind_first_prediction": {"evidence_valid": True, "evidence": [frozen]},
+        "anonymous_reviews": [],
+    }
+    response = {
+        "finding_id": "finding-model-copy-error",
+        "verdict": "FALSE_POSITIVE",
+        "confidence": "HIGH",
+        "reason_codes": ["SAFE_API_USAGE"],
+        "reasoning": "The cited source supports the false-positive verdict.",
+        "evidence": [frozen],
+        "uncertainty_reason": None,
+    }
+
+    decision, proof = machine_review._normalize_final_response_evidence(
+        response, context
+    )
+
+    assert decision["finding_id"] == context["finding_id"]
+    assert response["finding_id"] == "finding-model-copy-error"
+    assert proof == [
+        {
+            "operation": "RESTORE_FROZEN_CONTEXT_FINDING_ID_V1",
+            "json_pointer": "/finding_id",
+            "returned_sha256": machine_review._value_sha256(response["finding_id"]),
+            "canonical_sha256": machine_review._value_sha256(context["finding_id"]),
+            "match_keys": "case-context-sha256,frozen-finding-id",
+        }
+    ]
 
 
 def test_machine_review_routes_blind_first_and_finalizes_machine_reference(

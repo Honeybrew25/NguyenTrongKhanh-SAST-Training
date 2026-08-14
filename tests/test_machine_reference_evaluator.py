@@ -121,11 +121,11 @@ def test_machine_reference_metrics_are_explicitly_non_official() -> None:
     }
 
 
-def test_machine_reference_cannot_pass_human_gold_gate() -> None:
+def test_machine_reference_uses_its_dedicated_label_gate() -> None:
     label = _machine_label("finding", "MACHINE_TRUE_POSITIVE")
     prediction = _prediction("finding", "TRUE_POSITIVE")
     validate_machine_reference_classification_inputs([label], [prediction])
-    with pytest.raises(ValueError, match="invalid gold label|human-reviewed"):
+    with pytest.raises(ValueError, match="invalid gold label"):
         validate_official_classification_inputs([label], [prediction])
 
 

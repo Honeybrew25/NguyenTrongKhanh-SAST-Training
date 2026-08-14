@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "decision_id": "opengrep-machine-reference-publication-r1-20260814",
+  "effective_at": "2026-08-14T16:56:19+07:00",
+  "status": "PROJECT_APPROVED_MACHINE_REFERENCE",
+  "policy": {
+    "human_review_required": false,
+    "human_gold": false,
+    "publish_as_official_within_project": true,
+    "official_claim_name": "project-approved metrics against frozen LLM-adjudicated reference labels",
+    "universal_ground_truth_claim_allowed": false,
+    "novel_vulnerability_claim_allowed": false,
+    "uncertain_is_false_positive": false
+  },
+  "approval_basis": {
+    "policy_document": "docs/machine-reference-publication-policy.md",
+    "verification_method": "DUAL_BLIND_LLM_PLUS_BLIND_FIRST_ADJUDICATOR",
+    "candidate_generator_independent_from_labelers": true,
+    "repository_split_required": true
+  },
+  "frozen_inputs": {
+    "machine_reference_labels": {
+      "path": "artifacts/llm-review/opengrep-representative-openai-luna-r20-20260814/machine-reference-labels.jsonl",
+      "sha256": "5005bddff9abd3b2ace64aa8e4aa8f3e197a5bc3cf56ef4db6e0104a48be123d"
+    },
+    "enriched_dataset": {
+      "path": "data/enriched/opengrep-machine-reviewed-r1.jsonl",
+      "sha256": "5f75f333b7abe0bc1f37c253f3101d9ae3af4cd31e45ee1a903f288349944f6a"
+    },
+    "dataset_release": {
+      "path": "data/releases/opengrep-machine-reviewed-r1-20260814.json",
+      "sha256": "fce0678fb55ca72af22094c869e215c787c2bc79ba00a481aa81af56c240ea7a"
+    },
+    "split_manifest": {
+      "path": "data/splits/opengrep-machine-benchmark-r1-20260814/split-manifest.json",
+      "sha256": "bbf3df0f1ccb822a08b760a4cfb94b7b61ccb5639fd88e4a4f12ce74c2a73cf0"
+    },
+    "raw_opengrep_metrics": {
+      "path": "data/splits/opengrep-machine-benchmark-r1-20260814/raw-opengrep-metrics.json",
+      "sha256": "6eaf695449052342dcabd6838afdbb5be88fd0a176547a121d41ddaf753f8c00"
+    },
+    "snippet_only_metrics": {
+      "path": "data/splits/opengrep-machine-benchmark-r1-20260814/snippet-only-metrics.json",
+      "sha256": "486e298a8975e19266e0b138e70c49322d4252db83c9852c675c38fa27e33b22"
+    },
+    "repository_context_metrics": {
+      "path": "data/splits/opengrep-machine-benchmark-r1-20260814/repository-context-metrics.json",
+      "sha256": "1218b7f30c08de608015189762b6f6a31fe26d41ad40fc8a242a0b534be3c3c9"
+    }
+  },
+  "limitations": [
+    "The reference is model-authored and is not human gold.",
+    "Only seven machine-positive records exist in the 400-record prevalence sample.",
+    "The balanced test split contains four records from one repository.",
+    "GPT-5.6 Luna participates in adjudication and in two evaluated baselines, creating correlated-error risk."
+  ]
+}

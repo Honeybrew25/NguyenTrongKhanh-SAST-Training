@@ -1,0 +1,4 @@
+{"baseline":{"id":"raw-opengrep-accept-all","navigation":false},"finding_id":"finding-3e4feb9ae7412ffb5af298015aa964bffa60d81e97fd9c66e27993d1977000a3","verdict":"TRUE_POSITIVE"}
+{"baseline":{"id":"raw-opengrep-accept-all","navigation":false},"finding_id":"finding-48c5f3f1448a4c9bb2fb679bdae8d796c55c4d9641c7d54155e0df916e616afc","verdict":"TRUE_POSITIVE"}
+{"baseline":{"id":"raw-opengrep-accept-all","navigation":false},"finding_id":"finding-646b724adc29dd28ad412ac24510536cdd6d6d86866a242f9008419ed4e05fa7","verdict":"TRUE_POSITIVE"}
+{"baseline":{"id":"raw-opengrep-accept-all","navigation":false},"finding_id":"finding-cf98f094f7de864b39e79ae5d8fb1aa5d127d295cc9495cdac08d464e3d9e550","verdict":"TRUE_POSITIVE"}

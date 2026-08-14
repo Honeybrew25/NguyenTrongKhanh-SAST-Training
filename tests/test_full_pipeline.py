@@ -246,6 +246,7 @@ def _pipeline_fixture(tmp_path: Path) -> tuple[dict, dict[str, Path]]:
             "manifest_path": manifest_path,
             "entries_path": entries_path,
             "output_directory": project / "artifacts" / "full-pipeline",
+            "scanners": ("semgrep",),
         },
         status_paths,
     )
@@ -334,6 +335,7 @@ def test_discovers_attempts_and_requires_complete_semgrep_matrix(tmp_path: Path)
     coverage = validate_scan_coverage(
         jobs,
         {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
+        scanners=["semgrep"],
     )
 
     assert len(jobs) == 2
@@ -359,6 +361,7 @@ def test_running_and_missing_jobs_keep_coverage_incomplete(tmp_path: Path) -> No
     coverage = validate_scan_coverage(
         discover_scan_jobs(scan_root),
         {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
+        scanners=["semgrep"],
     )
 
     assert coverage["complete"] is False
@@ -395,6 +398,7 @@ def test_mixed_pointer_schemas_surface_quarantine_as_coverage_blocker(
     coverage = validate_scan_coverage(
         jobs,
         {"snapshots": [{"repo_url": REPO, "commit": COMMIT}]},
+        scanners=["semgrep"],
     )
 
     assert coverage["status_counts"] == {"TIMEOUT": 1}

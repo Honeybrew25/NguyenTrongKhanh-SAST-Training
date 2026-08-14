@@ -633,6 +633,14 @@ class GeminiApiProvider:
         evidence = response.get("evidence")
         if not isinstance(evidence, list):
             return None
+        if verdict in {"TRUE_POSITIVE", "FALSE_POSITIVE"} and not evidence:
+            if not any(exposed.values()):
+                return (
+                    f"{verdict} requires source evidence; no source range has been "
+                    "exposed by the controller, so return ABSTAIN with empty evidence "
+                    "and abstain_reason INSUFFICIENT_CONTEXT"
+                )
+            return f"{verdict} requires source evidence"
         for citation in evidence:
             if not isinstance(citation, dict):
                 continue
@@ -647,13 +655,26 @@ class GeminiApiProvider:
                 and not isinstance(end, bool)
             ):
                 continue
+            ranges = sorted(exposed.get(path, []))
             if not any(
                 exposed_start <= start and end <= exposed_end
-                for exposed_start, exposed_end in exposed.get(path, [])
+                for exposed_start, exposed_end in ranges
             ):
+                rendered_ranges = ", ".join(
+                    f"{exposed_start}-{exposed_end}"
+                    for exposed_start, exposed_end in ranges
+                )
+                if ranges:
+                    return (
+                        f"evidence citation {path}:{start}-{end} crosses or falls "
+                        "outside controller source-range boundaries; split or narrow "
+                        "it so every citation is fully contained in one of these "
+                        f"exposed ranges: {rendered_ranges}"
+                    )
                 return (
-                    "every evidence citation must be contained in a source range "
-                    "already exposed by the controller"
+                    f"evidence citation {path}:{start}-{end} has no exposed source "
+                    "range; request bounded source through the controller, or return "
+                    "ABSTAIN with empty evidence when source cannot be exposed"
                 )
         return None
 
@@ -926,18 +947,17 @@ class GeminiApiProvider:
                 )
                 for name, value in retry_normalized_usage.items():
                     cumulative_usage[name] = cumulative_usage.get(name, 0) + value
-                cause = (
-                    "RESPONSE_SEMANTICS"
-                    if defect
-                    in {
+                semantic_defects = {
                         "reason_codes must be unique",
                         "FALSE_POSITIVE requires at least one reason code",
                         "only FALSE_POSITIVE may contain false-positive reason codes",
-                        (
-                            "every evidence citation must be contained in a source range "
-                            "already exposed by the controller"
-                        ),
                     }
+                cause = (
+                    "RESPONSE_SEMANTICS"
+                    if defect in semantic_defects
+                    or defect.startswith("evidence citation ")
+                    or defect.endswith("requires source evidence")
+                    or " requires source evidence; " in defect
                     else "RESPONSE_SCHEMA"
                 )
                 retry_path = (
